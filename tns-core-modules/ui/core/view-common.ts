@@ -517,7 +517,7 @@ export class View extends ProxyObject implements definition.View {
 
     get cssType(): string {
         if (!this._cssType) {
-            this._cssType = this.typeName.replace(/-/, '').toLowerCase();
+            this._cssType = this.typeName.toLowerCase();
         }
         return this._cssType;
     }

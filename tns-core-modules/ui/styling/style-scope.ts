@@ -200,7 +200,7 @@ export class StyleScope {
         this.cssClassMap = {};
         this.cssTypeMap = {};
         this.cssVisualStateSelectors = [];
-        this.cssGeneralSelectors = [];
+        this.cssUniversalSelectors = [];
         let position = 0;
         let addToDictionary = (map: IDictionary<{ selector: CssSelector, position: number }[]>, key: string, selector: CssSelector) => {
             let list = map[key];
@@ -222,17 +222,16 @@ export class StyleScope {
                 visitClass: head => addToDictionary(this.cssClassMap, head.cssClass, selector),
                 visitType: head => addToDictionary(this.cssTypeMap, head.type, selector),
                 visitComposite: head => { throw new Error("Unexpected nested CompositeCssSelector."); },
-                visitAttr: head => {
-                    // Taking slow path through general selectors
-                    this.cssGeneralSelectors.push({ selector, position });
+                visitAttr: head => { // Taking slow path through general selectors
+                    this.cssUniversalSelectors.push({ selector, position });
                     position++;
                 },
                 visitVisualState: head => { throw new Error("Unexpected nested CssVisualStateSelector."); },
                 visitInlineStyle: head => { throw new Error("Unexpected InlineStyleSelector"); }
             }),
-            // Attr selectors have the specificity of a class selectors and pseudo selectors, they do not belong to complex selectors.
             visitAttr: (selector: CssAttrSelector) => {
-                this.cssGeneralSelectors.push({ selector, position });
+                // This is "[selected] { color: red; }" ~ "*[selected] { color: red }"
+                this.cssUniversalSelectors.push({ selector, position });
                 position++;
             },
             visitVisualState: (selector: CssVisualStateSelector) => {
@@ -253,7 +252,7 @@ export class StyleScope {
      * Wildcard ( * { somehting }), attribute selectors etc.
      * Getting something here is performance critical.
      */
-    private cssGeneralSelectors: { selector: CssSelector, position: number }[];
+    private cssUniversalSelectors: { selector: CssSelector, position: number }[];
     private cssVisualStateSelectors: { selector: CssVisualStateSelector, position: number }[];
 
     private static _joinCssSelectorsArrays(arrays: Array<Array<cssSelector.CssSelector>>): Array<cssSelector.CssSelector> {
@@ -278,14 +277,14 @@ export class StyleScope {
         let sel: { selector: CssSelector, position: number }[] = [];
         let push = pushed => Array.prototype.push.apply(sel, pushed);
 
-        push(this.cssGeneralSelectors); // Slow paths that apply for each element such as * {}
+        push(this.cssUniversalSelectors); // Slow paths that apply for each element such as * {}
         push(this.cssTypeMap[view.cssType]); // Type
         view._cssClasses.forEach(c => push(this.cssClassMap[c])); // Class
         push(this.cssIdMap[view.id]); // Id
 
-        sel.filter(s => s.selector.matches(view))
+        sel.filter(s => s.selector.matchTail(view))
             .sort((a, b) => a.selector.specificity - b.selector.specificity || a.position - b.position)
-            .forEach(s => s.selector.matchTailAndApply(view, observable.ValueSource.Css));
+            .forEach(s => s.selector.apply(view, observable.ValueSource.Css));
 
         let matchedStateSelectors = this.cssVisualStateSelectors.filter(s => s.selector.matches(view));
         if (matchedStateSelectors.length > 0) {

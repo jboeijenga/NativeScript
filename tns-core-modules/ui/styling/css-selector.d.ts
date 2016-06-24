@@ -26,11 +26,19 @@
 
         animations: Array<keyframeAnimation.KeyframeAnimationInfo>;
 
-        matches(view: view.View): boolean;
+        /**
+         * Perform full match.
+         */
+        match(view: view.View): view.View;
+
+        /**
+         * Some selectors can be split in composite rules,
+         * where the "head" rule is proved to apply for an element by outside means
+         * and then the rest of rules are performed here.
+         */
+        matchTail(view: view.View): boolean;
 
         apply(view: view.View, valueSourceModifier: number);
-
-        matchTailAndApply(view: view.View, valueSourceModifier: number): void;
 
         eachSetter(callback: (property: styleProperty.Property, resolvedValue: any) => void);
 
@@ -39,20 +47,11 @@
 
     class CssTypeSelector extends CssSelector {
         /**
-         * Qualified type name, lower-kebap-cased.
+         * Qualified type name, lowercasedwithoutdashes.
+         * Not that in order to support both PascalCase and kebab-case we transform the type selectors before we apply them,
+         * So ListView, listview, List-View, list-view must match the same elements.
          */
         type: string;
-
-        matches(view: view.View): boolean;
-
-        matchHead(view: view.View): boolean;
-        matchTail(view: view.View): boolean;
-
-        /**
-         * Convers a type name to qualified CSS type name.
-         * This should allow for PascalCase and kebap-case selectors to match the same elements.
-         */
-        static qualifiedTypeName(typeName: string): string;
     }
 
     class CssIdSelector extends CssSelector {
@@ -60,11 +59,9 @@
          * Gets the id this selector matches.
          */
         id: string;
-        matches(view: view.View): boolean;
     }
 
     class CssClassSelector extends CssSelector {
-        matches(view: view.View): boolean;
         /**
          * Gets the class this selector matches.
          */
@@ -87,7 +84,6 @@
         key: string;
         state: string;
         constructor(expression: string, declarations: cssParser.Declaration[]);
-        matches(view: view.View): boolean;
     }
 
     export function createSelector(expression: string, declarations: cssParser.Declaration[]): CssSelector;

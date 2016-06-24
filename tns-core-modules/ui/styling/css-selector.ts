@@ -1,4 +1,4 @@
-﻿import view = require("ui/core/view");
+﻿import {View} from "ui/core/view";
 import observable = require("ui/core/dependency-observable");
 import cssParser = require("css");
 import * as trace from "trace";
@@ -10,10 +10,52 @@ import cssAnimationParser = require("./css-animation-parser");
 import {getSpecialPropertySetter} from "ui/builder/special-properties";
 import {CssSelectorVisitor} from "ui/styling/css-selector";
 
-let ID_SPECIFICITY = 1000000;
-let ATTR_SPECIFITY = 10000;
-let CLASS_SPECIFICITY = 100;
-let TYPE_SPECIFICITY = 1;
+/**
+ * Please don't use CSS selectors with more than 255 type or class selectors, you will fail us here.
+ * CSS spec: https://www.w3.org/TR/css3-selectors/#specificity
+ */ 
+const enum Specificity {
+    Inline =    0x01000000,
+    Id =        0x00010000,
+    Attribute = 0x00000100,
+    Class =     0x00000100,
+    Type =      0x00000001,
+    Universal = 0x00000000
+}
+
+/**
+ * Specifies how the visual tree should be traversed when CSS selector matches a view.
+ */
+const enum ViewSearch {
+    /**
+     * The CSS selector must match exactly the view it is tested on. E.g as all of the 4 selectors: type#id.classA.classB
+     */
+    Element,
+
+    /**
+     * The CSS selector must match exactly the parent of the view it is tested on. E.g. as the left selector of: button > image
+     */
+    Parent,
+
+    /**
+     * The CSS selector must match any of the parents of the view it is tested on. E.g. as the left selector of: button image
+     */
+    Ancestor
+}
+
+/**
+ * How unlikely it is the CSS selector to match a randomly taken element.
+ * Almost like specificity. However the specificity of an attribute selector matches the specificity of a class selector,
+ * while attribute selectors are in general universal selectors (like *) and match a lot more than a class and even type selectors.
+ */
+const enum Rarity {
+    Id = 3,
+    Class = 2,
+    Type = 1,
+    Attribute = 0,
+    Universal = 0,
+    Inline = 0
+}
 
 export abstract class CssSelector {
     public animations: Array<keyframeAnimation.KeyframeAnimationInfo>;
@@ -21,6 +63,8 @@ export abstract class CssSelector {
     private _expression: string;
     private _declarations: cssParser.Declaration[];
     private _attrExpression: string;
+
+    public viewSearch: ViewSearch = ViewSearch.Element;
 
     constructor(expression: string, declarations: cssParser.Declaration[]) {
         if (expression) {
@@ -55,20 +99,26 @@ export abstract class CssSelector {
     }
 
     get specificity(): number {
-        throw "Specificity property is abstract";
+        return Specificity.Universal;
+    }
+
+    get rarity(): Rarity {
+        return Rarity.Universal;
     }
 
     protected get valueSourceModifier(): number {
         return observable.ValueSource.Css;
     }
 
-    public matches(view: view.View): boolean {
-        return false;
+    public matches(view: View): boolean {
+        return this.matchTail(view);
     }
 
-    public abstract matchTailAndApply(view: view.View, valueSourceModifier: number): void;
+    public matchTail(view: View): boolean {
+        return !this.attrExpression || matchesAttr(this.attrExpression, view);
+    }
 
-    public apply(view: view.View, valueSourceModifier: number) {
+    public apply(view: View, valueSourceModifier: number) {
         view._unregisterAllAnimations();
         let modifier = valueSourceModifier || this.valueSourceModifier;
         this.eachSetter((property, value) => {
@@ -119,7 +169,7 @@ export abstract class CssSelector {
     }
 
     public get declarationText(): string {
-        return this.declarations.map((declaration) => `${declaration.property}: ${declaration.value}`).join("; ");
+        return this.declarations ? this.declarations.map((declaration) => `${declaration.property}: ${declaration.value}`).join("; ") : "";
     }
 
     public get attrExpressionText(): string  {
@@ -135,37 +185,29 @@ export abstract class CssSelector {
 
 class CssTypeSelector extends CssSelector {
     private _type: string;
+
     constructor(expression: string, declarations: cssParser.Declaration[]) {
         super(expression, declarations);
-        this._type = CssTypeSelector.qualifiedTypeName(this.expression);
+        this._type = this.expression.replace(/-/, '').toLowerCase();
     }
+
     get specificity(): number {
-        let result = TYPE_SPECIFICITY;
-        let dotIndex = this.expression.indexOf(DOT);
-        if (dotIndex > -1) {
-            result += CLASS_SPECIFICITY;
-        }
-        return result;
+        return Specificity.Type;
     }
+
+    get rarity(): Rarity {
+        return Rarity.Type;
+    }
+
     /**
      * Qualified type name, lower cased with dashes removed.
      */
     get type(): string {
         return this._type;
     }
-    public matches(view: view.View): boolean {
-        let result = this.type === view.cssType;
-        if (result && this.attrExpression) {
-            return matchesAttr(this.attrExpression, view);
-        }
-        return result;
-    }
 
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (this.attrExpression && !matchesAttr(this.attrExpression, view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
+    public matches(view: View): boolean {
+        return this.type === view.cssType && super.matches(view);
     }
 
     public toString(): string {
@@ -175,13 +217,9 @@ class CssTypeSelector extends CssSelector {
     public visit(visitor: CssSelectorVisitor): void {
         visitor.visitType(<any>this);
     }
-
-    static qualifiedTypeName(selector: string): string {
-        return selector.replace(/-/, '').toLowerCase();
-    }
 }
 
-function matchesType(expression: string, view: view.View): boolean {
+function matchesType(expression: string, view: View): boolean {
     let exprArr = expression.split(".");
     let exprTypeName = exprArr[0];
     let exprClassName = exprArr[1];
@@ -204,24 +242,19 @@ function matchesType(expression: string, view: view.View): boolean {
 
 class CssIdSelector extends CssSelector {
     get specificity(): number {
-        return ID_SPECIFICITY;
+        return Specificity.Id;
     }
+
+    get rarity(): Rarity {
+        return Rarity.Id;
+    }
+
     get id() {
         return this.expression;
     }
-    public matches(view: view.View): boolean {
-        let result = this.id === view.id;
-        if (result && this.attrExpression) {
-            return matchesAttr(this.attrExpression, view);
-        }
-        return result;
-    }
 
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (this.attrExpression && !matchesAttr(this.attrExpression, view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
+    public matches(view: View): boolean {
+        return this.id === view.id && super.matches(view);
     }
 
     public toString(): string {
@@ -235,24 +268,21 @@ class CssIdSelector extends CssSelector {
 
 class CssClassSelector extends CssSelector {
     get specificity(): number {
-        return CLASS_SPECIFICITY;
+        return Specificity.Class;
     }
+
+    get rarity(): Rarity {
+        return Rarity.Class;
+    }
+
     get cssClass(): string {
         return this.expression;
     }
-    public matches(view: view.View): boolean {
-        let result = view._cssClasses.some(viewCssClass => viewCssClass === this.cssClass);
-        if (result && this.attrExpression) {
-            return matchesAttr(this.attrExpression, view);
-        }
-        return result;
+
+    public matches(view: View): boolean {
+        return view._cssClasses.some(cls => cls === this.cssClass) && super.matches(view);
     }
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (this.attrExpression && !matchesAttr(this.attrExpression, view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
-    }
+
     public toString(): string {
         return `CssClassSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
     }
@@ -264,20 +294,21 @@ class CssClassSelector extends CssSelector {
 
 class CssCompositeSelector extends CssSelector {
     private _head: CssSelector;
+    private _specificity: number;
 
     get specificity(): number {
-        let result = 0;
-        for (let i = 0; i < this.parentCssSelectors.length; i++) {
-            result += this.parentCssSelectors[i].selector.specificity;
-        }
-        return result;
+        return this._specificity;
+    }
+
+    get rarity(): Rarity {
+        return this.head.rarity;
     }
 
     get head(): CssSelector {
         return this._head;
     }
 
-    private parentCssSelectors: [{ selector: CssSelector, onlyDirectParent: boolean, onlySameElement: boolean }];
+    private tailSelectors: CssSelector[];
 
     private splitExpression(expression) {
         let result = [];
@@ -315,81 +346,66 @@ class CssCompositeSelector extends CssSelector {
 
     constructor(expr: string, declarations: cssParser.Declaration[]) {
         super(expr, declarations);
+
         let expressions = this.splitExpression(expr);
-        let onlyDirectParent = false;
-        let onlySameElement = false;
-        this.parentCssSelectors = <any>[];
+
+        let viewSearch: ViewSearch = ViewSearch.Element;
+        let allSelectors: CssSelector[] = [];
         for (let i = expressions.length - 1; i >= 0; i--) {
             if (expressions[i].trim() === GTHAN) {
-                onlyDirectParent = true;
+                viewSearch = ViewSearch.Parent;
                 continue;
             } else if (expressions[i] === EMPTY) {
-                onlySameElement = true;
+                viewSearch = ViewSearch.Element;
                 continue;
             }
-            if (this.parentCssSelectors.length === 0) {
-                // This is the right-most selector, which must match exactly the target element
-                onlyDirectParent = false;
-                onlySameElement = true;
+            if (allSelectors.length === 0) {
+                viewSearch = ViewSearch.Element;
             }
             let selector = createSelector(expressions[i].trim(), null);
-            this.parentCssSelectors.push({ selector, onlyDirectParent, onlySameElement });
-            onlyDirectParent = false;
-            onlySameElement = false;
+            selector.viewSearch = viewSearch;
+            allSelectors.push(selector);
+            viewSearch = ViewSearch.Ancestor;
         }
 
-        this._head = null;
-        for (let i = 0; i < this.parentCssSelectors.length; i++) {
-            let current = this.parentCssSelectors[i];
-            if (!current.onlySameElement) {
+        this._specificity = allSelectors.reduce((acc, sel) => acc + sel.specificity, 0);
+
+        let headIndex = -1, currentIndex = -1;
+        for (let current of allSelectors) {
+            if (current.viewSearch !== ViewSearch.Element) {
                 break;
             }
-            if (!this._head || current.selector.specificity > this._head.specificity) {
-                this._head = current.selector;
+            currentIndex++;
+            if (!this._head || current.rarity > this._head.rarity) {
+                this._head = current;
+                headIndex = currentIndex;
             }
         }
+
+        allSelectors.splice(headIndex, 1);
+        this.tailSelectors = allSelectors;
     }
 
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (!this.matchesChain(view, this.head)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
+    public matches(view: View): boolean {
+        return this.head.matches(view) && super.matches(view);
     }
 
-    public matches(view: view.View): boolean {
-        return this.matchesChain(view);
-    }
-
-    private matchesChain(view: view.View, head?: CssSelector): boolean {
-        for (let i = 0; i < this.parentCssSelectors.length; i++) {
-            let sel = this.parentCssSelectors[i];
-            if (sel.selector === head) {
-            } else if (sel.onlySameElement) {
-                if (!sel.selector.matches(view)) {
-                    return false;
+    public matchTail(view: View): boolean {
+        return this.head.matchTail(view)
+            && super.matchTail(view)
+            && this.tailSelectors.every(selector => {
+                switch(selector.viewSearch) {
+                    case ViewSearch.Element: return selector.matches(view);
+                    case ViewSearch.Parent: return (view = view.parent) && selector.matches(view);
+                    case ViewSearch.Ancestor:
+                        while(view = view.parent) {
+                            if (selector.matches(view)) {
+                                return true;
+                            }
+                        }
+                        return false;
                 }
-            } else if (sel.onlyDirectParent) {
-                view = view.parent;
-                if (!view) {
-                    return false;
-                }
-                if (!sel.selector.matches(view)) {
-                    return false;
-                }
-            } else {
-                // Ancestor...
-                while(view = view.parent) {
-                    if (sel.selector.matches(view)) {
-                        break;
-                    }
-                }
-                if (!view) {
-                    return false;
-                }
-            }
-        }
-        return true;
+            });
     }
 
     public toString(): string {
@@ -402,13 +418,8 @@ class CssCompositeSelector extends CssSelector {
 }
 
 class CssAttrSelector extends CssSelector {
-    get specificity(): number {
-        return ATTR_SPECIFITY;
-    }
-
-    public matches(view: view.View): boolean {
-        return matchesAttr(this.attrExpression, view);
-    }
+    get specificity(): number { return Specificity.Attribute; }
+    get rarity(): Rarity { return Rarity.Attribute; }
 
     public toString(): string {
         return `CssAttrSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
@@ -417,19 +428,9 @@ class CssAttrSelector extends CssSelector {
     public visit(visitor: CssSelectorVisitor): void {
         visitor.visitAttr(<any>this);
     }
-
-    /**
-     * There is no happy match for AttrSelector.
-     */
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (!this.matches(view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
-    }
 }
 
-function matchesAttr(attrExpression: string, view: view.View): boolean {
+function matchesAttr(attrExpression: string, view: View): boolean {
     let equalSignIndex = attrExpression.indexOf(EQUAL);
     if (equalSignIndex > 0) {
         let nameValueRegex = /(.*[^~|\^\$\*])[~|\^\$\*]?=(.*)/;
@@ -481,10 +482,10 @@ export class CssVisualStateSelector extends CssSelector {
     private _isByAttr: boolean;
 
     get specificity(): number {
-        return (this._isById ? ID_SPECIFICITY : 0) +
-            (this._isByAttr ? ATTR_SPECIFITY : 0) +
-            (this._isByClass ? CLASS_SPECIFICITY : 0) +
-            (this._isByType ? TYPE_SPECIFICITY : 0);
+        return (this._isById ? Specificity.Id : 0) +
+            (this._isByAttr ? Specificity.Attribute : 0) +
+            (this._isByClass ? Specificity.Class : 0) +
+            (this._isByType ? Specificity.Type : 0);
     }
 
     get key(): string {
@@ -522,7 +523,7 @@ export class CssVisualStateSelector extends CssSelector {
         }
     }
 
-    public matches(view: view.View): boolean {
+    public matchTail(view: View): boolean {
         let matches = true;
         if (this._isById) {
             matches = this._match === view.id;
@@ -541,14 +542,7 @@ export class CssVisualStateSelector extends CssSelector {
             matches = matchesAttr(this._key, view);
         }
 
-        return matches;
-    }
-
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (!this.matches(view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
+        return matches && super.matchTail(view);
     }
 
     public toString(): string {
@@ -608,7 +602,12 @@ class InlineStyleSelector extends CssSelector {
         super(undefined, declarations)
     }
 
-    public apply(view: view.View, valueSourceModifier: number) {
+    public get specificity(): number { return Specificity.Inline; }
+    public get rarity(): number { return Rarity.Inline; }
+    public match(view: View): boolean { return true; }
+    public matchTail(view: View): boolean { return true; }
+
+    public apply(view: View, valueSourceModifier: number) {
         this.eachSetter((property, value) => {
             const resolvedProperty = <StyleProperty>property;
             view.style._setValue(resolvedProperty, value, valueSourceModifier);
@@ -622,16 +621,9 @@ class InlineStyleSelector extends CssSelector {
     public visit(visitor: CssSelectorVisitor): void {
         visitor.visitInlineStyle(<any>this);
     }
-
-    public matchTailAndApply(view: view.View, valueSourceModifier: number): void {
-        if (!this.matches(view)) {
-            return;
-        }
-        this.apply(view, valueSourceModifier);
-    }
 }
 
-export function applyInlineSyle(view: view.View, declarations: cssParser.Declaration[]) {
+export function applyInlineSyle(view: View, declarations: cssParser.Declaration[]) {
     let localStyleSelector = new InlineStyleSelector(declarations);
     localStyleSelector.apply(view, observable.ValueSource.Local);
 }
