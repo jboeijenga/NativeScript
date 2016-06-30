@@ -1,629 +1,377 @@
-﻿import {View} from "ui/core/view";
-import observable = require("ui/core/dependency-observable");
-import cssParser = require("css");
-import * as trace from "trace";
-import {StyleProperty, ResolvedStylePropertyHandler, withStyleProperty} from "ui/styling/style-property";
-import * as types from "utils/types";
-import * as utils from "utils/utils";
-import keyframeAnimation = require("ui/animation/keyframe-animation");
-import cssAnimationParser = require("./css-animation-parser");
-import {getSpecialPropertySetter} from "ui/builder/special-properties";
-import {CssSelectorVisitor} from "ui/styling/css-selector";
+﻿import {Node, Declaration} from "ui/styling/css-selector";
+import {isNullOrUndefined} from "utils/types";
+import {escapeRegexSymbols} from "utils/utils";
 
-/**
- * Please don't use CSS selectors with more than 255 type or class selectors, you will fail us here.
- * CSS spec: https://www.w3.org/TR/css3-selectors/#specificity
- */ 
+import * as cssParser from "css";
+import * as selectorParser from "./css-selector-parser";
+
 const enum Specificity {
-    Inline =    0x01000000,
-    Id =        0x00010000,
-    Attribute = 0x00000100,
-    Class =     0x00000100,
-    Type =      0x00000001,
-    Universal = 0x00000000
+    Inline =        0x01000000,
+    Id =            0x00010000,
+    Attribute =     0x00000100,
+    Class =         0x00000100,
+    PseudoClass =   0x00000100,
+    Type =          0x00000001,
+    Universal =     0x00000000,
+    Invalid =       0x00000000
 }
 
-/**
- * Specifies how the visual tree should be traversed when CSS selector matches a view.
- */
-const enum ViewSearch {
-    /**
-     * The CSS selector must match exactly the view it is tested on. E.g as all of the 4 selectors: type#id.classA.classB
-     */
-    Element,
-
-    /**
-     * The CSS selector must match exactly the parent of the view it is tested on. E.g. as the left selector of: button > image
-     */
-    Parent,
-
-    /**
-     * The CSS selector must match any of the parents of the view it is tested on. E.g. as the left selector of: button image
-     */
-    Ancestor
-}
-
-/**
- * How unlikely it is the CSS selector to match a randomly taken element.
- * Almost like specificity. However the specificity of an attribute selector matches the specificity of a class selector,
- * while attribute selectors are in general universal selectors (like *) and match a lot more than a class and even type selectors.
- */
 const enum Rarity {
+    Invalid = 4,
     Id = 3,
     Class = 2,
     Type = 1,
+    PseudoClass = 0, 
     Attribute = 0,
     Universal = 0,
     Inline = 0
 }
 
-export abstract class CssSelector {
-    public animations: Array<keyframeAnimation.KeyframeAnimationInfo>;
+interface LookupSorter {
+    sortById(id: string, sel: SelectorCore);
+    sortByClass(cssClass: string, sel: SelectorCore);
+    sortByType(cssType: string, sel: SelectorCore);
+    sortAsUniversal(sel: SelectorCore);
+}
 
-    private _expression: string;
-    private _declarations: cssParser.Declaration[];
-    private _attrExpression: string;
+function SelProps(specificity: Specificity, rarity: Rarity): ClassDecorator {
+    return cls => {
+        cls.prototype.specificity = specificity;
+        cls.prototype.rarity = rarity;
+        cls.prototype.combinator = "";
+        return cls;
+    }
+}
 
-    public viewSearch: ViewSearch = ViewSearch.Element;
+declare type Combinator = "+" | ">" | "~" | " ";
+@SelProps(Specificity.Universal, Rarity.Universal)
+export abstract class SelectorCore {
+    public specificity: number;
+    public rarity: Rarity;
+    public combinator: Combinator;
+    public ruleset: RuleSet;
+    public abstract match(node: Node): boolean;
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortAsUniversal(base || this); }
+}
 
-    constructor(expression: string, declarations: cssParser.Declaration[]) {
-        if (expression) {
-            let leftSquareBracketIndex = expression.indexOf(LSBRACKET);
-            if (leftSquareBracketIndex >= 0) {
-                // extracts what is inside square brackets ([target = 'test'] will extract "target = 'test'")
-                let paramsRegex = /\[\s*(.*)\s*\]/;
-                let attrParams = paramsRegex.exec(expression);
-                if (attrParams && attrParams.length > 1) {
-                    this._attrExpression = attrParams[1].trim();
-                }
-                this._expression = expression.substr(0, leftSquareBracketIndex);
-            }
-            else {
-                this._expression = expression;
-            }
+export abstract class SimpleSelector extends SelectorCore {
+}
+
+function wrap(text: string): string {
+    return text ? ` ${text} ` : "";
+}
+
+@SelProps(Specificity.Invalid, Rarity.Invalid)
+export class InvalidSelector extends SimpleSelector {
+    constructor(public e: Error) { super(); }
+    public toString(): string { return `<error: ${this.e}>`; }
+    public match(node: Node): boolean { return false; }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {}
+}
+
+@SelProps(Specificity.Universal, Rarity.Universal)
+export class UniversalSelector extends SimpleSelector {
+    public toString(): string { return `*${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return true; }
+}
+
+@SelProps(Specificity.Id, Rarity.Id)
+export class IdSelector extends SimpleSelector {
+    constructor(public id: string) { super(); }
+    public toString(): string { return `#${this.id}${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return node.id === this.id; }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortById(this.id, base || this); }
+}
+
+@SelProps(Specificity.Type, Rarity.Type)
+export class TypeSelector extends SimpleSelector {
+    constructor(public cssType: string) { super(); }
+    public toString(): string { return `${this.cssType}${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return node.cssType === this.cssType; }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortByType(this.cssType, base || this); }
+}
+
+@SelProps(Specificity.Class, Rarity.Class)
+export class ClassSelector extends SimpleSelector {
+    constructor(public cssClass: string) { super(); }
+    public toString(): string { return `.${this.cssClass}${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return node.cssClasses && node.cssClasses.has(this.cssClass); }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortByClass(this.cssClass, base || this); }
+}
+
+declare type AttributeTest = "=" | "^=" | "$=" | "*=" | "=" | "~=" | "|=";
+@SelProps(Specificity.Attribute, Rarity.Attribute)
+export class AttributeSelector extends SimpleSelector {
+    constructor(public attribute: string, public test?: AttributeTest, public value?: string) {
+        super();
+
+        if (!test) {
+            // HasAttribute
+            this.match = node => !isNullOrUndefined(node[attribute]);
+            return;
         }
-        this._declarations = declarations;
-        this.animations = cssAnimationParser.CssAnimationParser.keyframeAnimationsFromCSSDeclarations(declarations);
-    }
 
-    get expression(): string {
-        return this._expression;
-    }
-
-    get attrExpression(): string {
-        return this._attrExpression;
-    }
-
-    get declarations(): Array<{ property: string; value: any }> {
-        return this._declarations;
-    }
-
-    get specificity(): number {
-        return Specificity.Universal;
-    }
-
-    get rarity(): Rarity {
-        return Rarity.Universal;
-    }
-
-    protected get valueSourceModifier(): number {
-        return observable.ValueSource.Css;
-    }
-
-    public matches(view: View): boolean {
-        return this.matchTail(view);
-    }
-
-    public matchTail(view: View): boolean {
-        return !this.attrExpression || matchesAttr(this.attrExpression, view);
-    }
-
-    public apply(view: View, valueSourceModifier: number) {
-        view._unregisterAllAnimations();
-        let modifier = valueSourceModifier || this.valueSourceModifier;
-        this.eachSetter((property, value) => {
-            if (types.isString(property)) {
-                const propertyName = <string>property;
-                let attrHandled = false;
-                let specialSetter = getSpecialPropertySetter(propertyName);
-
-                if (!attrHandled && specialSetter) {
-                    specialSetter(view, value);
-                    attrHandled = true;
-                }
-
-                if (!attrHandled && propertyName in view) {
-                    view[propertyName] = utils.convertString(value);
-                }
-            } else {
-                const resolvedProperty = <StyleProperty>property;
-                try {
-                    view.style._setValue(resolvedProperty, value, modifier);
-                } catch (ex) {
-                    if (trace.enabled) {
-                        trace.write("Error setting property: " + resolvedProperty.name + " view: " + view + " value: " + value + " " + ex, trace.categories.Style, trace.messageType.error);
-                    }
-                }
-            }
-        });
-        if (this.animations && view.isLoaded && view._nativeView !== undefined) {
-            for (let animationInfo of this.animations) {
-                let animation = keyframeAnimation.KeyframeAnimation.keyframeAnimationFromInfo(animationInfo, modifier);
-                if (animation) {
-                    view._registerAnimation(animation);
-                    animation.play(view)
-                        .then(() => { view._unregisterAnimation(animation);  })
-                        .catch((e) => { view._unregisterAnimation(animation); });
-                }
-            }
+        if (!value) {
+            this.match = node => false;
         }
-    }
 
-    public eachSetter(callback: ResolvedStylePropertyHandler) {
-        for (let i = 0; i < this._declarations.length; i++) {
-            let declaration = this._declarations[i];
-            let name = declaration.property;
-            let resolvedValue = declaration.value;
-            withStyleProperty(name, resolvedValue, callback);
+        let escapedValue = escapeRegexSymbols(value);
+        let regexp: RegExp = null;
+        switch(test) {
+            case "^=": // PrefixMatch
+                regexp = new RegExp("^" + escapedValue);
+                break;
+            case "$=": // SuffixMatch
+                regexp = new RegExp(escapedValue + "$");
+                break;
+            case "*=": // SubstringMatch
+                regexp = new RegExp(escapedValue);
+                break;
+            case "=": // Equals
+                regexp = new RegExp("^" + escapedValue + "$");
+                break;
+            case "~=": // Includes
+                if (/\s/.test(value)) {
+                    this.match = node => false;
+                    return;
+                }
+                regexp = new RegExp("(^|\\s)" + escapedValue + "(\\s|$)");
+                break;
+            case "|=": // DashMatch
+                regexp = new RegExp("^" + escapedValue + "(-|$)");
+                break;
         }
-    }
 
-    public get declarationText(): string {
-        return this.declarations ? this.declarations.map((declaration) => `${declaration.property}: ${declaration.value}`).join("; ") : "";
-    }
-
-    public get attrExpressionText(): string  {
-        if (this.attrExpression) {
-            return `[${this.attrExpression}]`;
+        if (regexp) {
+            this.match = node => regexp.test(node[attribute] + "");
+            return;
         } else {
-            return "";
+            this.match = node => false;
+            return;
         }
     }
-
-    public abstract visit(visitor: CssSelectorVisitor): void;
+    public get specificity(): number { return Specificity.Attribute; }
+    public get rarity(): number { return Specificity.Attribute; }
+    public toString(): string { return `[${this.attribute}${wrap(this.test)}${(this.test && this.value) || ''}]${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return false; }
 }
 
-class CssTypeSelector extends CssSelector {
-    private _type: string;
+@SelProps(Specificity.PseudoClass, Rarity.PseudoClass)
+export class PseudoClassSelector extends SimpleSelector {
+    constructor(public cssPseudoClass: string) { super(); }
+    public toString(): string { return `:${this.cssPseudoClass}${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return node.cssPseudoClasses && node.cssPseudoClasses.has(this.cssPseudoClass); }
+}
 
-    constructor(expression: string, declarations: cssParser.Declaration[]) {
-        super(expression, declarations);
-        this._type = this.expression.replace(/-/, '').toLowerCase();
+export class SimpleSelectorSequence extends SelectorCore {
+    private head: SimpleSelector;
+    constructor(public selectors: SimpleSelector[]) {
+        super();
+        this.specificity = selectors.reduce((sum, sel) => sel.specificity + sum, 0);
+        this.head = this.selectors.reduce((prev, curr) => !prev || (curr.rarity > prev.rarity) ? curr : prev, null);
     }
-
-    get specificity(): number {
-        return Specificity.Type;
-    }
-
-    get rarity(): Rarity {
-        return Rarity.Type;
-    }
-
-    /**
-     * Qualified type name, lower cased with dashes removed.
-     */
-    get type(): string {
-        return this._type;
-    }
-
-    public matches(view: View): boolean {
-        return this.type === view.cssType && super.matches(view);
-    }
-
-    public toString(): string {
-        return `CssTypeSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitType(<any>this);
+    public toString(): string { return `${this.selectors.join("")}${wrap(this.combinator)}`; }
+    public match(node: Node): boolean { return this.selectors.every(sel => sel.match(node)); }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
+        this.head.lookupSort(sorter, base || this);
     }
 }
 
-function matchesType(expression: string, view: View): boolean {
-    let exprArr = expression.split(".");
-    let exprTypeName = exprArr[0];
-    let exprClassName = exprArr[1];
-
-    let typeCheck = exprTypeName.toLowerCase() === view.typeName.toLowerCase() ||
-        exprTypeName.toLowerCase() === view.typeName.split(/(?=[A-Z])/).join("-").toLowerCase();
-
-    if (typeCheck) {
-        if (exprClassName) {
-            return view._cssClasses.some((cssClass, i, arr) => { return cssClass === exprClassName });
-        }
-        else {
-            return typeCheck;
-        }
+export class Selector extends SelectorCore {
+    private selectorsReversed: (SimpleSelectorSequence | SimpleSelector)[];
+    constructor(public selectors: (SimpleSelectorSequence | SimpleSelector)[]) {
+        super();
+        this.selectorsReversed = selectors.reverse();
+        this.specificity = selectors.reduce((sum, sel) => sel.specificity + sum, 0);
     }
-    else {
-        return false;
-    }
-}
-
-class CssIdSelector extends CssSelector {
-    get specificity(): number {
-        return Specificity.Id;
-    }
-
-    get rarity(): Rarity {
-        return Rarity.Id;
-    }
-
-    get id() {
-        return this.expression;
-    }
-
-    public matches(view: View): boolean {
-        return this.id === view.id && super.matches(view);
-    }
-
-    public toString(): string {
-        return `CssIdSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitId(<any>this);
-    }
-}
-
-class CssClassSelector extends CssSelector {
-    get specificity(): number {
-        return Specificity.Class;
-    }
-
-    get rarity(): Rarity {
-        return Rarity.Class;
-    }
-
-    get cssClass(): string {
-        return this.expression;
-    }
-
-    public matches(view: View): boolean {
-        return view._cssClasses.some(cls => cls === this.cssClass) && super.matches(view);
-    }
-
-    public toString(): string {
-        return `CssClassSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitClass(<any>this);
-    }
-}
-
-class CssCompositeSelector extends CssSelector {
-    private _head: CssSelector;
-    private _specificity: number;
-
-    get specificity(): number {
-        return this._specificity;
-    }
-
-    get rarity(): Rarity {
-        return this.head.rarity;
-    }
-
-    get head(): CssSelector {
-        return this._head;
-    }
-
-    private tailSelectors: CssSelector[];
-
-    private splitExpression(expression) {
-        let result = [];
-        let tempArr = [];
-        let validSpace = true;
-        for (let i = 0; i < expression.length; i++) {
-            if (expression[i] === LSBRACKET) {
-                validSpace = false;
-            }
-            if (expression[i] === RSBRACKET) {
-                validSpace = true;
-            }
-            let isDotOrHash = expression[i] === DOT || expression[i] === HASH;
-            if ((expression[i] === SPACE && validSpace) || (expression[i] === GTHAN) || (isDotOrHash && tempArr.length > 0)) {
-                if (tempArr.length > 0) {
-                    result.push(tempArr.join(""));
-                    tempArr = [];
-                    if (isDotOrHash) {
-                        result.push(EMPTY);
-                        tempArr.push(expression[i]);
-                    }
-                }
-                if (expression[i] === GTHAN) {
-                    result.push(GTHAN);
-                }
-                continue;
-            }
-            tempArr.push(expression[i]);
-        }
-        if (tempArr.length > 0) {
-            result.push(tempArr.join(""));
-        }
-        return result;
-    }
-
-    constructor(expr: string, declarations: cssParser.Declaration[]) {
-        super(expr, declarations);
-
-        let expressions = this.splitExpression(expr);
-
-        let viewSearch: ViewSearch = ViewSearch.Element;
-        let allSelectors: CssSelector[] = [];
-        for (let i = expressions.length - 1; i >= 0; i--) {
-            if (expressions[i].trim() === GTHAN) {
-                viewSearch = ViewSearch.Parent;
-                continue;
-            } else if (expressions[i] === EMPTY) {
-                viewSearch = ViewSearch.Element;
-                continue;
-            }
-            if (allSelectors.length === 0) {
-                viewSearch = ViewSearch.Element;
-            }
-            let selector = createSelector(expressions[i].trim(), null);
-            selector.viewSearch = viewSearch;
-            allSelectors.push(selector);
-            viewSearch = ViewSearch.Ancestor;
-        }
-
-        this._specificity = allSelectors.reduce((acc, sel) => acc + sel.specificity, 0);
-
-        let headIndex = -1, currentIndex = -1;
-        for (let current of allSelectors) {
-            if (current.viewSearch !== ViewSearch.Element) {
-                break;
-            }
-            currentIndex++;
-            if (!this._head || current.rarity > this._head.rarity) {
-                this._head = current;
-                headIndex = currentIndex;
-            }
-        }
-
-        allSelectors.splice(headIndex, 1);
-        this.tailSelectors = allSelectors;
-    }
-
-    public matches(view: View): boolean {
-        return this.head.matches(view) && super.matches(view);
-    }
-
-    public matchTail(view: View): boolean {
-        return this.head.matchTail(view)
-            && super.matchTail(view)
-            && this.tailSelectors.every(selector => {
-                switch(selector.viewSearch) {
-                    case ViewSearch.Element: return selector.matches(view);
-                    case ViewSearch.Parent: return (view = view.parent) && selector.matches(view);
-                    case ViewSearch.Ancestor:
-                        while(view = view.parent) {
-                            if (selector.matches(view)) {
-                                return true;
-                            }
+    public toString(): string { return this.selectors.join(""); }
+    public match(node: Node): boolean {
+        return this.selectorsReversed.every(sel => {
+            switch(sel.combinator) {
+                case undefined: return sel.match(node);
+                case ">": return (node = node.parent) && sel.match(node);
+                case " ":
+                    while(node = node.parent) {
+                        if (sel.match(node)) {
+                            return true;
                         }
-                        return false;
-                }
-            });
-    }
-
-    public toString(): string {
-        return `CssCompositeSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitComposite(<any>this);
-    }
-}
-
-class CssAttrSelector extends CssSelector {
-    get specificity(): number { return Specificity.Attribute; }
-    get rarity(): Rarity { return Rarity.Attribute; }
-
-    public toString(): string {
-        return `CssAttrSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitAttr(<any>this);
-    }
-}
-
-function matchesAttr(attrExpression: string, view: View): boolean {
-    let equalSignIndex = attrExpression.indexOf(EQUAL);
-    if (equalSignIndex > 0) {
-        let nameValueRegex = /(.*[^~|\^\$\*])[~|\^\$\*]?=(.*)/;
-        let nameValueRegexRes = nameValueRegex.exec(attrExpression);
-        let attrName;
-        let attrValue;
-        if (nameValueRegexRes && nameValueRegexRes.length > 2) {
-            attrName = nameValueRegexRes[1].trim();
-            attrValue = nameValueRegexRes[2].trim().replace(/^(["'])*(.*)\1$/, '$2');
-        }
-        // extract entire sign (=, ~=, |=, ^=, $=, *=)
-        let escapedAttrValue = utils.escapeRegexSymbols(attrValue);
-        let attrCheckRegex;
-        switch (attrExpression.charAt(equalSignIndex - 1)) {
-            case "~":
-                attrCheckRegex = new RegExp("(^|[^a-zA-Z-])" + escapedAttrValue + "([^a-zA-Z-]|$)");
-                break;
-            case "|":
-                attrCheckRegex = new RegExp("^" + escapedAttrValue + "\\b");
-                break;
-            case "^":
-                attrCheckRegex = new RegExp("^" + escapedAttrValue);
-                break;
-            case "$":
-                attrCheckRegex = new RegExp(escapedAttrValue + "$");
-                break;
-            case "*":
-                attrCheckRegex = new RegExp(escapedAttrValue);
-                break;
-
-            // only = (EQUAL)
-            default:
-                attrCheckRegex = new RegExp("^" + escapedAttrValue + "$");
-                break;
-        }
-        return !types.isNullOrUndefined(view[attrName]) && attrCheckRegex.test(view[attrName] + "");
-    } else {
-        return !types.isNullOrUndefined(view[attrExpression]);
-    }
-}
-
-export class CssVisualStateSelector extends CssSelector {
-    private _key: string;
-    private _match: string;
-    private _state: string;
-    private _isById: boolean;
-    private _isByClass: boolean;
-    private _isByType: boolean;
-    private _isByAttr: boolean;
-
-    get specificity(): number {
-        return (this._isById ? Specificity.Id : 0) +
-            (this._isByAttr ? Specificity.Attribute : 0) +
-            (this._isByClass ? Specificity.Class : 0) +
-            (this._isByType ? Specificity.Type : 0);
-    }
-
-    get key(): string {
-        return this._key;
-    }
-
-    get state(): string {
-        return this._state;
-    }
-
-    protected get valueSourceModifier(): number {
-        return observable.ValueSource.VisualState;
-    }
-
-    constructor(expression: string, declarations: cssParser.Declaration[]) {
-        super(expression, declarations);
-
-        let args = expression.split(COLON);
-        this._key = args[0];
-        this._state = args[1];
-
-        if (this._key.charAt(0) === HASH) {
-            this._match = this._key.substring(1);
-            this._isById = true;
-        } else if (this._key.charAt(0) === DOT) {
-            this._match = this._key.substring(1);
-            this._isByClass = true;
-        } else if (this._key.charAt(0) === LSBRACKET) {
-            this._match = this._key;
-            this._isByAttr = true;
-        }
-        else if (this._key.length > 0) { // handle the case when there is no key. E.x. ":pressed" selector
-            this._match = this._key;
-            this._isByType = true;
-        }
-    }
-
-    public matchTail(view: View): boolean {
-        let matches = true;
-        if (this._isById) {
-            matches = this._match === view.id;
-        }
-
-        if (this._isByClass) {
-            let expectedClass = this._match;
-            matches = view._cssClasses.some((cssClass, i, arr) => { return cssClass === expectedClass });
-        }
-
-        if (this._isByType) {
-            matches = matchesType(this._match, view);
-        }
-
-        if (this._isByAttr) {
-            matches = matchesAttr(this._key, view);
-        }
-
-        return matches && super.matchTail(view);
-    }
-
-    public toString(): string {
-        return `CssVisualStateSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitVisualState(<any>this);
-    }
-}
-
-let HASH = "#";
-let DOT = ".";
-let COLON = ":";
-let SPACE = " ";
-let GTHAN = ">";
-let EMPTY = "";
-let LSBRACKET = "[";
-let RSBRACKET = "]";
-let EQUAL = "=";
-
-export function createSelector(expression: string, declarations: cssParser.Declaration[]): CssSelector {
-    let goodExpr = expression.replace(/>/g, " > ").replace(/\s\s+/g, " ");
-    let spaceIndex = goodExpr.indexOf(SPACE);
-    let hasNonFirstDotOrHash = goodExpr.indexOf(DOT, 1) >= 0 || goodExpr.indexOf(HASH, 1) >= 0;
-    if (spaceIndex >= 0) {
-        return new CssCompositeSelector(goodExpr, declarations);
-    }
-
-    let leftSquareBracketIndex = goodExpr.indexOf(LSBRACKET);
-    if (leftSquareBracketIndex === 0) {
-        return new CssAttrSelector(goodExpr, declarations);
-    }
-
-    var colonIndex = goodExpr.indexOf(COLON);
-    if (colonIndex >= 0) {
-        return new CssVisualStateSelector(goodExpr, declarations);
-    }
-
-    if (hasNonFirstDotOrHash) {
-        return new CssCompositeSelector(goodExpr, declarations);
-    }
-
-    if (goodExpr.charAt(0) === HASH) {
-        return new CssIdSelector(goodExpr.substring(1), declarations);
-    }
-
-    if (goodExpr.charAt(0) === DOT) {
-        return new CssClassSelector(goodExpr.substring(1), declarations);
-    }
-
-    return new CssTypeSelector(goodExpr, declarations);
-}
-
-class InlineStyleSelector extends CssSelector {
-    constructor(declarations: cssParser.Declaration[]) {
-        super(undefined, declarations)
-    }
-
-    public get specificity(): number { return Specificity.Inline; }
-    public get rarity(): number { return Rarity.Inline; }
-    public match(view: View): boolean { return true; }
-    public matchTail(view: View): boolean { return true; }
-
-    public apply(view: View, valueSourceModifier: number) {
-        this.eachSetter((property, value) => {
-            const resolvedProperty = <StyleProperty>property;
-            view.style._setValue(resolvedProperty, value, valueSourceModifier);
+                    }
+                    return false;
+                case "~":
+                case "+":
+                default:
+                    throw new Error(`Unsupported combinator '${sel.combinator}'`);
+            }
         });
     }
-
-    public toString(): string {
-        return `InlineStyleSelector ${this.expression}${this.attrExpressionText} { ${this.declarationText} }`;
-    }
-
-    public visit(visitor: CssSelectorVisitor): void {
-        visitor.visitInlineStyle(<any>this);
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
+        this.selectorsReversed[0].lookupSort(sorter, this);
     }
 }
 
-export function applyInlineSyle(view: View, declarations: cssParser.Declaration[]) {
-    let localStyleSelector = new InlineStyleSelector(declarations);
-    localStyleSelector.apply(view, observable.ValueSource.Local);
+export class SelectorGroup extends SelectorCore {
+    private _ruleset: RuleSet;
+    constructor(public selectors: (Selector | SimpleSelectorSequence | SimpleSelector)[]) { super(); }
+    public toString(): string { return this.selectors.join(", "); }
+    public match(node: Node): boolean { return this.selectors.some(sel => sel.match(node)); }
+    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
+        this.selectors.forEach(sel => sel.lookupSort(sorter));
+    }
+    public set ruleset(ruleset: RuleSet) {
+        this._ruleset = ruleset;
+        this.selectors.forEach(sel => sel.ruleset = ruleset);
+    }
+    public get ruleset(): RuleSet { return this._ruleset; }
+}
+
+export class RuleSet {
+    constructor(private selector: SimpleSelector | SimpleSelectorSequence | Selector | SelectorGroup, private declarations: Declaration[]) {
+        selector.ruleset = this;
+    }
+    public toString(): string { return `${this.selector} {${this.declarations.map((d, i) => `${i == 0 ? " ": ""}${d.property}: ${d.value}`).join("; ")} }`; }
+    public lookupSort(sorter: LookupSorter): void { this.selector.lookupSort(sorter); }
+}
+
+export function fromAstNodes(astRules: Array<cssParser.Node>): RuleSet[] {
+    return astRules.filter(isRule).map(rule => {
+        let declarations = rule.declarations.filter(isDeclaration).map(createDeclaration);
+        let selector: SimpleSelector | SimpleSelectorSequence | Selector | SelectorGroup;
+        if (rule.selectors.length === 0) {
+            selector = new InvalidSelector(new Error("RuleSet without selectors."));
+        } else if (rule.selectors.length === 1) {
+            // This RuleSet has a single Selector so we will not combine it into SelectorGroup
+            selector = createSelector(rule.selectors[0]);
+        } else if (rule.selectors.length > 1) {
+            selector = new SelectorGroup(rule.selectors.map(createSelector));
+        }
+        return new RuleSet(selector, declarations);
+    });
+}
+
+function createDeclaration(decl: cssParser.Declaration): any {
+    return { property: decl.property.toLowerCase(), value: decl.value };
+}
+
+function createSelector(sel: string): SimpleSelector | SimpleSelectorSequence | Selector {
+    try {
+        let ast = selectorParser.parse(sel);
+        if (ast.length === 0) {
+            return new InvalidSelector(new Error("Empty selector"));
+        }
+
+        let selectors = ast.map(createSimpleSelector);
+        let sequences: (SimpleSelector | SimpleSelectorSequence)[] = [];
+
+        // Join simple selectors into sequences, set combinators
+        for (let seqStart = 0, seqEnd = 0, last = selectors.length - 1; seqEnd <= last; seqEnd++) {
+            let sel = selectors[seqEnd];
+            let astComb = ast[seqEnd].comb;
+            if (astComb || seqEnd === last) {
+                if (seqStart === seqEnd) {
+                    // This is a sequnce with single SimpleSelector, so we will not combine it into SimpleSelectorSequence.
+                    sel.combinator = astComb;
+                    sequences.push(sel);
+                } else {
+                    let sequence = new SimpleSelectorSequence(selectors.slice(seqStart, seqEnd + 1));
+                    sequence.combinator = astComb;
+                    sequences.push(sequence);
+                }
+                seqStart = seqEnd + 1;
+            }
+        }
+
+        if (sequences.length === 1) {
+            // This is a selector with a single SinmpleSelectorSequence so we will not combine it into Selector.
+            return sequences[0];
+        } else {
+            return new Selector(sequences);
+        }
+    } catch(e) {
+        return new InvalidSelector(e);
+    }
+}
+
+function createSimpleSelector(sel: selectorParser.SimpleSelector): SimpleSelector {
+    if (selectorParser.isUniversal(sel)) {
+        return new UniversalSelector();
+    } else if (selectorParser.isId(sel)) {
+        return new IdSelector(sel.ident);
+    } else if (selectorParser.isType(sel)) {
+        return new TypeSelector(sel.ident.replace(/-/, '').toLowerCase());
+    } else if (selectorParser.isClass(sel)) {
+        return new ClassSelector(sel.ident);
+    } else if (selectorParser.isPseudo(sel)) {
+        return new PseudoClassSelector(sel.ident);
+    } else if (selectorParser.isAttribute(sel)) {
+        if (sel.test) {
+            return new AttributeSelector(sel.prop, sel.test, sel.value);
+        } else {
+            return new AttributeSelector(sel.prop)
+        }
+    }
+}
+
+function isRule(node: cssParser.Node): node is cssParser.Rule {
+    return node.type === "rule";
+}
+function isDeclaration(node: cssParser.Node): node is cssParser.Declaration {
+    return node.type === "declaration";
+}
+
+interface SelectorInDocument {
+    pos: number;
+    sel: SelectorCore;
+}
+interface SelectorMap {
+    [key: string]: SelectorInDocument[]
+}
+export class SelectorsMap implements LookupSorter {
+    private id: SelectorMap = {};
+    private class: SelectorMap = {};
+    private type: SelectorMap = {};
+    private universal: SelectorInDocument[] = [];
+
+    private position = 0;
+
+    constructor(rulesets: RuleSet[]) {
+        rulesets.forEach(rule => rule.lookupSort(this));
+    }
+
+    query(node: Node): SelectorCore[] {
+        let selectorClasses = [
+            this.universal,
+            this.id[node.id],
+            this.type[node.cssType]
+        ];
+        node.cssClasses && node.cssClasses.forEach(c => selectorClasses.push(this.class[c]));
+        let selectors = selectorClasses
+            .filter(arr => !!arr)
+            .reduce((cur, next) => cur.concat(next), [])
+            .sort((a, b) => a.sel.specificity - b.sel.specificity || a.pos - b.pos)
+            .map(docSel => docSel.sel);
+        return selectors;
+    }
+
+    sortById(id: string, sel: SelectorCore): void { this.addToMap(this.id, id, sel); }
+    sortByClass(cssClass: string, sel: SelectorCore): void {
+        this.addToMap(this.class, cssClass, sel);
+    }
+    sortByType(cssType: string, sel: SelectorCore): void {
+        this.addToMap(this.type, cssType, sel);
+    }
+    sortAsUniversal(sel: SelectorCore): void { this.universal.push(this.makeDocSelector(sel)); }
+
+    private addToMap(map: SelectorMap, head: string, sel: SelectorCore): void {
+        this.position++;
+        let list = map[head];
+        if (list) {
+            list.push(this.makeDocSelector(sel));
+        } else {
+            map[head] = [this.makeDocSelector(sel)];
+        }
+    }
+
+    private makeDocSelector(sel: SelectorCore): SelectorInDocument {
+        return { sel, pos: this.position++ };
+    }
 }

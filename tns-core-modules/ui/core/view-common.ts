@@ -14,17 +14,9 @@ import {PropertyMetadata, ProxyObject} from "ui/core/proxy";
 import {PropertyMetadataSettings, PropertyChangeData, Property, ValueSource, PropertyMetadata as doPropertyMetadata} from "ui/core/dependency-observable";
 import {registerSpecialProperty} from "ui/builder/special-properties";
 import {CommonLayoutParams, nativeLayoutParamsProperty} from "ui/styling/style";
-import * as visualStateConstants from "ui/styling/visual-state-constants";
-import * as visualStateModule from "../styling/visual-state";
 import * as animModule from "ui/animation";
-import { Source } from "utils/debug";
-
-var visualState: typeof visualStateModule;
-function ensureVisualState() {
-    if (!visualState) {
-        visualState = require("../styling/visual-state");
-    }
-}
+import {CssState} from "ui/styling/style-scope";
+import {Source} from "utils/debug";
 
 registerSpecialProperty("class", (instance: definition.View, propertyValue: string) => {
     instance.className = propertyValue;
@@ -108,12 +100,10 @@ var viewIdCounter = 0;
 
 function onCssClassPropertyChanged(data: PropertyChangeData) {
     var view = <View>data.object;
-
+    var classes = view.cssClasses;
+    classes.clear();
     if (types.isString(data.newValue)) {
-        view._cssClasses = (<string>data.newValue).split(" ");
-    }
-    else {
-        view._cssClasses.length = 0;
+        data.newValue.split(" ").forEach(c => classes.add(c));
     }
 }
 
@@ -153,7 +143,6 @@ export class View extends ProxyObject implements definition.View {
     private _parent: definition.View;
     private _style: style.Style;
     private _visualState: string;
-    private _requestedVisualState: string;
     private _isLoaded: boolean;
     private _isLayoutValid: boolean = false;
     private _cssType: string;
@@ -163,8 +152,12 @@ export class View extends ProxyObject implements definition.View {
 
     public _domId: number;
     public _isAddedToNativeVisualTree = false;
-    public _cssClasses: Array<string> = [];
     public _gestureObservers = {};
+
+    public cssClasses: Set<string> = new Set();
+    public cssPseudoClasses: Set<string> = new Set();
+
+    public _cssState: CssState;
 
     public getGestureObservers(type: gestures.GestureTypes): Array<gestures.GesturesObserver> {
         return this._gestureObservers[type];
@@ -175,7 +168,7 @@ export class View extends ProxyObject implements definition.View {
 
         this._style = new style.Style(this);
         this._domId = viewIdCounter++;
-        this._visualState = visualStateConstants.Normal;
+        this._goToVisualState("normal");
     }
 
     observe(type: gestures.GestureTypes, callback: (args: gestures.GestureEventData) => void, thisArg?: any): void {
@@ -511,10 +504,6 @@ export class View extends ProxyObject implements definition.View {
         throw new Error("isLayoutValid is read-only property.");
     }
 
-    get visualState(): string {
-        return this._visualState;
-    }
-
     get cssType(): string {
         if (!this._cssType) {
             this._cssType = this.typeName.toLowerCase();
@@ -607,6 +596,7 @@ export class View extends ProxyObject implements definition.View {
 
         if (metadata.affectsStyle) {
             this.style._resetCssValues();
+            this._cssState = null;
             this._applyStyleFromScope();
             this._eachChildView((v) => {
                 v._checkMetadataOnPropertyChanged(metadata);
@@ -653,6 +643,20 @@ export class View extends ProxyObject implements definition.View {
 
     public layoutNativeView(left: number, top: number, right: number, bottom: number): void {
         //
+    }
+
+    public addPseudoClass(name: string): void {
+        this.cssPseudoClasses.add(name);
+        if (this._cssState) {
+            this._cssState.update();
+        }
+    }
+
+    public deletePseudoClass(name: string): void {
+        this.cssPseudoClasses.delete(name);
+        if (this._cssState) {
+            this._cssState.update();
+        }
     }
 
     public static resolveSizeAndState(size: number, specSize: number, specMode: number, childMeasuredState: number): number {
@@ -1076,15 +1080,13 @@ export class View extends ProxyObject implements definition.View {
         if (trace.enabled) {
             trace.write(this + " going to state: " + state, trace.categories.Style);
         }
-        if (state === this._visualState || this._requestedVisualState === state) {
+        if (state === this._visualState) {
             return;
         }
-        // we use lazy require to prevent cyclic dependencies issues
-        ensureVisualState();
-        this._visualState = visualState.goToState(this, state);
 
-        // TODO: What state should we set here - the requested or the actual one?
-        this._requestedVisualState = state;
+        this.deletePseudoClass(this._visualState);
+        this._visualState = state;
+        this.addPseudoClass(state);
     }
 
     public _applyXmlAttribute(attribute, value): boolean {

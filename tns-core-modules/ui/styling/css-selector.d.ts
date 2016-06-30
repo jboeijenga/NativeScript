@@ -1,97 +1,43 @@
 ﻿declare module "ui/styling/css-selector" {
-    import view = require("ui/core/view");
-    import cssParser = require("css");
-    import styleProperty = require("ui/styling/style-property");
-    import keyframeAnimation = require("ui/animation/keyframe-animation");
+    import * as parser from "css";
 
-    export interface CssSelectorVisitor {
-        visitId(selector: CssIdSelector);
-        visitClass(selector: CssClassSelector);
-        visitType(selector: CssTypeSelector);
-        visitComposite(selector: CssCompositeSelector);
-        visitAttr(selector: CssAttrSelector);
-        visitVisualState(selector: CssVisualStateSelector);
-        visitInlineStyle(selector: InlineStyleSelector);
+    /**
+     * An interface describing the shape of a type on which the selectors may apply.
+     * Note, the ui/core/view implements Node.
+     * To specify which pseudo-class states are on or off, set node[state("<name>")] to boolean.
+     */
+    interface Node {
+        parent?: Node;
+
+        id?: string;
+        cssType?: string;
+        cssClasses?: Set<string>;
+        cssPseudoClasses?: Set<string>;
     }
 
-    export class CssSelector {
-        constructor(expression: string, declarations: cssParser.Declaration[]);
+    interface Declaration {
+        property: string;
+        value: string;
+    }
 
-        expression: string;
-        attrExpression: string;
+    class SelectorCore {
+        match(node: Node): boolean;
+        ruleset: RuleSet;
+    }
 
-        declarations(): Array<{ property: string; value: any }>;
+    class RuleSet {
+        declarations: Declaration[];
+    }
 
-        specificity: number;
-
-        animations: Array<keyframeAnimation.KeyframeAnimationInfo>;
+    class SelectorsMap {
+        constructor(rules: RuleSet[]);
 
         /**
-         * Perform full match.
+         * Get a list of selectors that are likely to match the node.
          */
-        match(view: view.View): view.View;
-
-        /**
-         * Some selectors can be split in composite rules,
-         * where the "head" rule is proved to apply for an element by outside means
-         * and then the rest of rules are performed here.
-         */
-        matchTail(view: view.View): boolean;
-
-        apply(view: view.View, valueSourceModifier: number);
-
-        eachSetter(callback: (property: styleProperty.Property, resolvedValue: any) => void);
-
-        visit(visitor: CssSelectorVisitor): void;
+        query(node: Node): SelectorCore[];
     }
 
-    class CssTypeSelector extends CssSelector {
-        /**
-         * Qualified type name, lowercasedwithoutdashes.
-         * Not that in order to support both PascalCase and kebab-case we transform the type selectors before we apply them,
-         * So ListView, listview, List-View, list-view must match the same elements.
-         */
-        type: string;
-    }
-
-    class CssIdSelector extends CssSelector {
-        /**
-         * Gets the id this selector matches.
-         */
-        id: string;
-    }
-
-    class CssClassSelector extends CssSelector {
-        /**
-         * Gets the class this selector matches.
-         */
-        cssClass: string;
-    }
-
-    class CssCompositeSelector extends CssSelector {
-        /**
-         * Gets the last CssSelector from the composite chain.
-         * This will be suitable for pre-screening and must be one of the last CssSelectors in the chain,
-         * that must match exactly the view they are applied on.
-         */
-        head: CssSelector;
-    }
-
-    class CssAttrSelector extends CssSelector {
-    }
-
-    export class CssVisualStateSelector extends CssSelector {
-        key: string;
-        state: string;
-        constructor(expression: string, declarations: cssParser.Declaration[]);
-    }
-
-    export function createSelector(expression: string, declarations: cssParser.Declaration[]): CssSelector;
-
-    class InlineStyleSelector extends CssSelector {
-        constructor(declarations: cssParser.Declaration[]);
-        apply(view: view.View);
-    }
-
-    export function applyInlineSyle(view: view.View, declarations: cssParser.Declaration[]);
+    export function fromAstNodes(astRules: parser.Node[]): RuleSet[];
+    export function applyInlineStyle(node: Node, declarations: Declaration[]): void;
 }

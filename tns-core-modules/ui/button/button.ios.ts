@@ -91,13 +91,16 @@ export class Button extends common.Button {
     private _updateHandler() {
         if (this.parent !== null && this.page !== null) {
             let rootPage = this.page;
-            let scope: styleScope.StyleScope = (<any>rootPage)._getStyleScope();
-            if (scope.getVisualStates(this) !== undefined) {
-                this._stateChangedHandler.start();
-            }
-            else {
-                this._stateChangedHandler.stop();
-            }
+            // let scope: styleScope.StyleScope = (<any>rootPage)._getStyleScope();
+
+            // TODO: Button watch for changes...
+
+            // if (scope.getVisualStates(this) !== undefined) {
+            //     this._stateChangedHandler.start();
+            // }
+            // else {
+            //     this._stateChangedHandler.stop();
+            // }
         }
     }
 }

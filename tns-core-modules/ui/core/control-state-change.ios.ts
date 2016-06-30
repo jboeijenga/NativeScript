@@ -1,6 +1,5 @@
 ﻿/* tslint:disable:no-unused-variable */
 import definition = require("ui/core/control-state-change");
-import * as visualStateConstants from "ui/styling/visual-state-constants";
 
 var ObserverClass = NSObject.extend(
     {
@@ -59,7 +58,7 @@ export class ControlStateChangeListener implements definition.ControlStateChange
     }
 
     private _updateState() {
-        var state = visualStateConstants.Normal;
+        var state = "normal";
         if (this._control.highlighted) {
             state = "highlighted";
         }

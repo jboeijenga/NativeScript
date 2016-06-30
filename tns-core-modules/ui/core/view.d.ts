@@ -1,5 +1,6 @@
 declare module "ui/core/view" {
     import style = require("ui/styling");
+    import cssScope = require("ui/styling/style-scope");
     import dependencyObservable = require("ui/core/dependency-observable");
     import proxy = require("ui/core/proxy");
     import gestures = require("ui/gestures");
@@ -295,7 +296,8 @@ declare module "ui/core/view" {
          */
         cssType: string;
 
-        visualState: string;
+        cssClasses: Set<string>;
+        cssPseudoClasses: Set<string>;
 
         /**
          * Gets owner page. This is a read-only property.
@@ -481,6 +483,20 @@ declare module "ui/core/view" {
          * Returns the actual size of the view in device-independent pixels.
          */
         public getActualSize(): Size;
+
+        /**
+         * @protected
+         * @unstable
+         * A widget can call this method to add a matching css pseudo class.
+         */
+        public addPseudoClass(name: string): void;
+
+        /**
+         * @protected
+         * @unstable
+         * A widget can call this method to discard mathing css pseudo class.
+         */
+        public deletePseudoClass(name: string): void;
         
         // Lifecycle events
         onLoaded(): void;
@@ -509,7 +525,7 @@ declare module "ui/core/view" {
         _gestureObservers: any;
         _isInheritedChange(): boolean;
         _domId: number;
-        _cssClasses: Array<string>;
+        _cssState: cssScope.CssState;
 
         _registerAnimation(animation: keyframeAnimationModule.KeyframeAnimation);
         _unregisterAnimation(animation: keyframeAnimationModule.KeyframeAnimation);
