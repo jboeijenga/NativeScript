@@ -1,4 +1,4 @@
-
+/// <reference path="./css-selector-parser.d.ts" />
 export interface SimpleSelector {
     pos: number;
     type: "" | "*" | "#" | "." | ":" | "[]";
@@ -48,7 +48,7 @@ export function isAttribute(sel: SimpleSelector): sel is AttributeSelector {
     return sel.type === "[]";
 }
 
-var regex = /\s*(?:(\*)|(#|\.|:|\b)([_-\w][_-\w\d]*)|\[\s*([_-\w][_-\w\d]*)\s*(?:(=|\^=|\$=|\*=|\~=|\|=)\s*(?:([_-\w][_-\w\d]*)|"((?:[^\\"]|\\(?:"|n|r|f|\\|0-9a-f))*)"|'((?:[^\\']|\\(?:'|n|r|f|\\|0-9a-f))*)')\s*)?\])(?:\s*(\+|~|>|\s))?/g;
+var regex = /(\s*)(?:(\*)|(#|\.|:|\b)([_-\w][_-\w\d]*)|\[\s*([_-\w][_-\w\d]*)\s*(?:(=|\^=|\$=|\*=|\~=|\|=)\s*(?:([_-\w][_-\w\d]*)|"((?:[^\\"]|\\(?:"|n|r|f|\\|0-9a-f))*)"|'((?:[^\\']|\\(?:'|n|r|f|\\|0-9a-f))*)')\s*)?\])(?:\s*(\+|~|>|\s))?/g;
 // no lead ws     univ   type pref and ident          [    prop                   =                            ident    -or-    "string escapes \" \00aaff"    -or-   'string    escapes \' urf-8: \00aaff'       ]        combinator
 
 export function parse(selector: string): SimpleSelector[] {
@@ -106,19 +106,19 @@ function getLeadingWhiteSpace(result: RegExpExecArray): string {
     return result[1] || "";
 }
 function getType(result: RegExpExecArray): "" | "*" | "." | "#" | ":" | "[]" {
-    return <"[]">(result[4] && "[]") || <"*">result[1] || <"" | "." | "#" | ":">result[2];
+    return <"[]">(result[5] && "[]") || <"*">result[2] || <"" | "." | "#" | ":">result[3];
 }
 function getIdentifier(result: RegExpExecArray): string {
-    return result[3];
-}
-function getProperty(result: RegExpExecArray): string {
     return result[4];
 }
+function getProperty(result: RegExpExecArray): string {
+    return result[5];
+}
 function getPropertyTest(result: RegExpExecArray): string {
-    return result[5] || undefined;
+    return result[6] || undefined;
 }
 function getPropertyValue(result: RegExpExecArray): string {
-    return result[6] || result[7] || result[8];
+    return result[7] || result[8] || result[9];
 }
 function getCombinator(result: RegExpExecArray): "+" | "~" | ">" | " " {
     return <("+" | "~" | ">" | " ")>result[result.length - 1] || undefined;
