@@ -237,15 +237,32 @@ export function assertDeepEqual(actual, expected, path: any[] = []): void {
         throw new Error("At /" + path.join("/") + " types of actual " + typeofActual + " and expected " + typeofExpected + " differ.");
     } else if (typeofActual === "object" || typeofActual === "array") {
         for (let key in actual) {
-            if (!expected || !(key in expected)) {
+            if (!(key in expected)) {
                 throw new Error("At /" + path.join("/") + " found unexpected key " + key + ".");
             }
             assertDeepEqual(actual[key], expected[key], path.concat([key]));
         }
         for (let key in expected) {
-            if (!actual || !(key in actual)) {
+            if (!(key in actual)) {
                 throw new Error("At /" + path.join("/") + " expected a key " + key + ".");
             }
+        }
+    } else if (actual !== expected) {
+        throw new Error("At /" + path.join("/") + " actual: '" + actual + "' and expected: '" + expected + "' differ.");
+    }
+}
+
+export function assertDeepSuperset(actual, expected, path: any[] = []): void {
+    let typeofActual = typeof actual;
+    let typeofExpected = typeof expected;
+    if (typeofActual !== typeofExpected) {
+        throw new Error("At /" + path.join("/") + " types of actual " + typeofActual + " and expected " + typeofExpected + " differ.");
+    } else if (typeofActual === "object" || typeofActual === "array") {
+        for (let key in expected) {
+            if (!(key in actual)) {
+                throw new Error("At /" + path.join("/") + " expected a key " + key + ".");
+            }
+            assertDeepSuperset(actual[key], expected[key], path.concat([key]));
         }
     } else if (actual !== expected) {
         throw new Error("At /" + path.join("/") + " actual: '" + actual + "' and expected: '" + expected + "' differ.");

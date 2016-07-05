@@ -26,6 +26,14 @@
     }
 
     class RuleSet {
+        /**
+         * Gets the selectors in this ruleset's selector group.
+         */
+        selectors: SelectorCore[];
+
+        /**
+         * Gets the key-value list of declarations for the ruleset.
+         */
         declarations: Declaration[];
     }
 
@@ -39,5 +47,4 @@
     }
 
     export function fromAstNodes(astRules: parser.Node[]): RuleSet[];
-    export function applyInlineStyle(node: Node, declarations: Declaration[]): void;
 }

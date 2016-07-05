@@ -209,42 +209,20 @@ export class Selector extends SelectorCore {
     }
 }
 
-export class SelectorGroup extends SelectorCore {
-    private _ruleset: RuleSet;
-    constructor(public selectors: (Selector | SimpleSelectorSequence | SimpleSelector)[]) { super(); }
-    public toString(): string { return this.selectors.join(", "); }
-    public match(node: Node): boolean { return this.selectors.some(sel => sel.match(node)); }
-    public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
-        this.selectors.forEach(sel => sel.lookupSort(sorter));
-    }
-    public set ruleset(ruleset: RuleSet) {
-        this._ruleset = ruleset;
-        this.selectors.forEach(sel => sel.ruleset = ruleset);
-    }
-    public get ruleset(): RuleSet { return this._ruleset; }
-}
-
 export class RuleSet {
-    constructor(private selector: SimpleSelector | SimpleSelectorSequence | Selector | SelectorGroup, private declarations: Declaration[]) {
-        selector.ruleset = this;
+    constructor(public selectors: SelectorCore[], private declarations: Declaration[]) {
+        this.selectors.forEach(sel => sel.ruleset = this);
     }
-    public toString(): string { return `${this.selector} {${this.declarations.map((d, i) => `${i == 0 ? " ": ""}${d.property}: ${d.value}`).join("; ")} }`; }
-    public lookupSort(sorter: LookupSorter): void { this.selector.lookupSort(sorter); }
+    public toString(): string { return `${this.selectors.join(", ")} {${this.declarations.map((d, i) => `${i == 0 ? " ": ""}${d.property}: ${d.value}`).join("; ")} }`; }
+    public lookupSort(sorter: LookupSorter): void { this.selectors.forEach(sel => sel.lookupSort(sorter)); }
 }
 
-export function fromAstNodes(astRules: Array<cssParser.Node>): RuleSet[] {
+export function fromAstNodes(astRules: cssParser.Node[]): RuleSet[] {
     return astRules.filter(isRule).map(rule => {
         let declarations = rule.declarations.filter(isDeclaration).map(createDeclaration);
-        let selector: SimpleSelector | SimpleSelectorSequence | Selector | SelectorGroup;
-        if (rule.selectors.length === 0) {
-            selector = new InvalidSelector(new Error("RuleSet without selectors."));
-        } else if (rule.selectors.length === 1) {
-            // This RuleSet has a single Selector so we will not combine it into SelectorGroup
-            selector = createSelector(rule.selectors[0]);
-        } else if (rule.selectors.length > 1) {
-            selector = new SelectorGroup(rule.selectors.map(createSelector));
-        }
-        return new RuleSet(selector, declarations);
+        let selectors = rule.selectors.map(createSelector);
+        let ruleset = new RuleSet(selectors, declarations);
+        return ruleset;
     });
 }
 

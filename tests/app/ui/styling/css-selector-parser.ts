@@ -24,6 +24,61 @@ export function test_fairly_complex_selector(): void {
     ]);
 }
 
+export function test_typeguard_isUniversal(): void {
+    let selector = parser.parse("*")[0];
+    TKUnit.assertTrue(parser.isUniversal(selector));
+    TKUnit.assertFalse(parser.isType(selector));
+    TKUnit.assertFalse(parser.isClass(selector));
+    TKUnit.assertFalse(parser.isId(selector));
+    TKUnit.assertFalse(parser.isPseudo(selector));
+    TKUnit.assertFalse(parser.isAttribute(selector));
+}
+export function test_typeguard_isType(): void {
+    let selector = parser.parse("button")[0];
+    TKUnit.assertFalse(parser.isUniversal(selector));
+    TKUnit.assertTrue(parser.isType(selector));
+    TKUnit.assertFalse(parser.isClass(selector));
+    TKUnit.assertFalse(parser.isId(selector));
+    TKUnit.assertFalse(parser.isPseudo(selector));
+    TKUnit.assertFalse(parser.isAttribute(selector));
+}
+export function test_typeguard_isClass(): void {
+    let selector = parser.parse(".login")[0];
+    TKUnit.assertFalse(parser.isUniversal(selector));
+    TKUnit.assertFalse(parser.isType(selector));
+    TKUnit.assertTrue(parser.isClass(selector));
+    TKUnit.assertFalse(parser.isId(selector));
+    TKUnit.assertFalse(parser.isPseudo(selector));
+    TKUnit.assertFalse(parser.isAttribute(selector));
+}
+export function test_typeguard_isId(): void {
+    let selector = parser.parse("#login")[0];
+    TKUnit.assertFalse(parser.isUniversal(selector));
+    TKUnit.assertFalse(parser.isType(selector));
+    TKUnit.assertFalse(parser.isClass(selector));
+    TKUnit.assertTrue(parser.isId(selector));
+    TKUnit.assertFalse(parser.isPseudo(selector));
+    TKUnit.assertFalse(parser.isAttribute(selector));
+}
+export function test_typeguard_isPseudo(): void {
+    let selector = parser.parse(":hover")[0];
+    TKUnit.assertFalse(parser.isUniversal(selector));
+    TKUnit.assertFalse(parser.isType(selector));
+    TKUnit.assertFalse(parser.isClass(selector));
+    TKUnit.assertFalse(parser.isId(selector));
+    TKUnit.assertTrue(parser.isPseudo(selector));
+    TKUnit.assertFalse(parser.isAttribute(selector));
+}
+export function test_typeguard_isAttribute(): void {
+    let selector = parser.parse("[src]")[0];
+    TKUnit.assertFalse(parser.isUniversal(selector));
+    TKUnit.assertFalse(parser.isType(selector));
+    TKUnit.assertFalse(parser.isClass(selector));
+    TKUnit.assertFalse(parser.isId(selector));
+    TKUnit.assertFalse(parser.isPseudo(selector));
+    TKUnit.assertTrue(parser.isAttribute(selector));
+}
+
 export function test_universal_selector(): void {
     test(`*`, [{ pos: 0, type: "*" }]);
 }
@@ -36,6 +91,9 @@ export function test_class_selector(): void {
 export function test_id_selector(): void {
     test(`#login`, [{ pos: 0, type: "#", ident: "login" }]);
 }
+export function test_pseudoClass(): void {
+    test(`:hover`, [{ pos: 0, type: ":", ident: "hover" }]);
+}
 export function test_attribute_no_value(): void {
     test(`[src]`, [{ pos: 0, type: "[]", prop: "src" }]);
 }
@@ -44,9 +102,6 @@ export function test_attribute_equal(): void {
 }
 export function test_attribute_all_tests(): void {
     ["=", "^=", "$=", "*=", "=", "~=", "|="].forEach(t => test(`[src ${t} "val"]`, [{ pos: 0, type: "[]", prop: "src", test: t, value: "val"}]));
-}
-export function test_pseudoClass(): void {
-    test(`:hover`, [{ pos: 0, type: ":", ident: "hover" }]);
 }
 export function test_direct_parent_comb(): void {
     test(`listview > .image`, [
