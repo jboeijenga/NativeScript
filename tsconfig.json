@@ -1,5 +1,4 @@
 {
-    "version": "1.6.2",
     "compilerOptions": {
         "noEmitOnError": true,
         "noEmitHelpers": true,
@@ -9,7 +8,7 @@
         "noImplicitAny": false,
         "noImplicitUseStrict": true,
         "experimentalDecorators": true,
-        "diagnostics": true
+        "jsx": "react"
     },
     "exclude": [
         "node_modules",

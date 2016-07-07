@@ -43,7 +43,20 @@
         /**
          * Get a list of selectors that are likely to match the node.
          */
-        query(node: Node): SelectorCore[];
+        query(node: Node): SelectorsMatch;
+    }
+
+    interface Dependencies {
+        attributes: Set<string>;
+        pseudoClasses: Set<string>;
+    }
+
+    class SelectorsMatch {
+        selectors: SelectorCore[];
+        /**
+         * Gets a map of nodes to attributes and pseudo classes, that may affect the state of the dynamic 
+         */
+        changeMap: Map<Node, Dependencies>;
     }
 
     export function fromAstNodes(astRules: parser.Node[]): RuleSet[];

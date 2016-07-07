@@ -12,7 +12,7 @@ import cssAnimationParser = require("./css-animation-parser");
 import observable = require("ui/core/dependency-observable");
 
 import {convertString} from "utils/utils";
-import {RuleSet, SelectorsMap, SelectorCore} from "ui/styling/css-selector";
+import {RuleSet, SelectorsMap, SelectorCore, SelectorsMatch} from "ui/styling/css-selector";
 import {StyleProperty, ResolvedStylePropertyHandler, withStyleProperty} from "ui/styling/style-property";
 import {getSpecialPropertySetter} from "ui/builder/special-properties";
 
@@ -42,15 +42,19 @@ function ensureFS() {
 var pattern: RegExp = /('|")(.*?)\1/;
 
 export class CssState {
-    constructor(private view: view.View, private selectors: SelectorCore[]) {
+    constructor(private view: view.View, private selectors: SelectorsMatch) {
         this.update();
+        // selectors.changedOn((view, props, pseudoClasses) => {
+        //     console.log("Watch the " + view + " for " + props + " and " + pseudoClasses);
+        //     // TODO: Subscribe...
+        // });
     }
 
     public update(): void {
         this.view.style._beginUpdate();
 
         this.view.style._resetCssValues();
-        let matchingSelectors = this.selectors.filter(sel => sel.match(this.view));
+        let matchingSelectors = this.selectors.selectors.filter(sel => sel.match(this.view));
         matchingSelectors.forEach(s => applyDescriptors(this.view, s.ruleset));
 
         this.view.style._endUpdate();
@@ -200,17 +204,13 @@ export class StyleScope {
     public applySelectors(view: view.View): void {
         this.ensureSelectors();
 
-        let selectors = this._selectors.query(view);
-        if (selectors.length === 0) {
-            view._cssState = null;
-        } else {
-            view._cssState = new CssState(view, selectors);
-        }
+        let state = this._selectors.query(view);
+        view._cssState = new CssState(view, state);
     }
 
     public query(node: Node): SelectorCore[] {
         this.ensureSelectors();
-        return this._selectors.query(node);
+        return this._selectors.query(node).selectors;
     }
 
     private static createSelectorsFromSyntaxTree(ast: cssParser.SyntaxTree, keyframes: Object): RuleSet[] {

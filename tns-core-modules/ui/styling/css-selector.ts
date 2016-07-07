@@ -34,34 +34,59 @@ interface LookupSorter {
     sortAsUniversal(sel: SelectorCore);
 }
 
-function SelProps(specificity: Specificity, rarity: Rarity): ClassDecorator {
+namespace Match {
+    /**
+     * Depends on attributes or pseudoclasses state;
+     */
+    export var Dynamic = true;
+    /**
+     * Depends only on the tree structure.
+     */
+    export var Static = false;
+}
+
+function SelProps(specificity: Specificity, rarity: Rarity, dynamic: boolean = false): ClassDecorator {
     return cls => {
         cls.prototype.specificity = specificity;
         cls.prototype.rarity = rarity;
         cls.prototype.combinator = "";
+        cls.prototype.dynamic = dynamic;
         return cls;
     }
 }
 
 declare type Combinator = "+" | ">" | "~" | " ";
-@SelProps(Specificity.Universal, Rarity.Universal)
+@SelProps(Specificity.Universal, Rarity.Universal, Match.Static)
 export abstract class SelectorCore {
     public specificity: number;
     public rarity: Rarity;
     public combinator: Combinator;
     public ruleset: RuleSet;
+    public dynamic: boolean;
     public abstract match(node: Node): boolean;
+    public abstract matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean;
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortAsUniversal(base || this); }
 }
 
 export abstract class SimpleSelector extends SelectorCore {
+    public matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean {
+        if (!this.dynamic) {
+            return this.match(node);
+        } else if (this.mayMatch(node)) {
+            this.updateChangeMap(node, map);
+            return true;
+        }
+        return false;
+    }
+    public mayMatch(node: Node): boolean { return this.match(node); }
+    public updateChangeMap(node: Node, map: ChangeMap): void {}
 }
 
 function wrap(text: string): string {
     return text ? ` ${text} ` : "";
 }
 
-@SelProps(Specificity.Invalid, Rarity.Invalid)
+@SelProps(Specificity.Invalid, Rarity.Invalid, Match.Static)
 export class InvalidSelector extends SimpleSelector {
     constructor(public e: Error) { super(); }
     public toString(): string { return `<error: ${this.e}>`; }
@@ -69,13 +94,13 @@ export class InvalidSelector extends SimpleSelector {
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {}
 }
 
-@SelProps(Specificity.Universal, Rarity.Universal)
+@SelProps(Specificity.Universal, Rarity.Universal, Match.Static)
 export class UniversalSelector extends SimpleSelector {
     public toString(): string { return `*${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return true; }
 }
 
-@SelProps(Specificity.Id, Rarity.Id)
+@SelProps(Specificity.Id, Rarity.Id, Match.Static)
 export class IdSelector extends SimpleSelector {
     constructor(public id: string) { super(); }
     public toString(): string { return `#${this.id}${wrap(this.combinator)}`; }
@@ -83,7 +108,7 @@ export class IdSelector extends SimpleSelector {
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortById(this.id, base || this); }
 }
 
-@SelProps(Specificity.Type, Rarity.Type)
+@SelProps(Specificity.Type, Rarity.Type, Match.Static)
 export class TypeSelector extends SimpleSelector {
     constructor(public cssType: string) { super(); }
     public toString(): string { return `${this.cssType}${wrap(this.combinator)}`; }
@@ -91,7 +116,7 @@ export class TypeSelector extends SimpleSelector {
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortByType(this.cssType, base || this); }
 }
 
-@SelProps(Specificity.Class, Rarity.Class)
+@SelProps(Specificity.Class, Rarity.Class, Match.Static)
 export class ClassSelector extends SimpleSelector {
     constructor(public cssClass: string) { super(); }
     public toString(): string { return `.${this.cssClass}${wrap(this.combinator)}`; }
@@ -100,7 +125,7 @@ export class ClassSelector extends SimpleSelector {
 }
 
 declare type AttributeTest = "=" | "^=" | "$=" | "*=" | "=" | "~=" | "|=";
-@SelProps(Specificity.Attribute, Rarity.Attribute)
+@SelProps(Specificity.Attribute, Rarity.Attribute, Match.Dynamic)
 export class AttributeSelector extends SimpleSelector {
     constructor(public attribute: string, public test?: AttributeTest, public value?: string) {
         super();
@@ -154,58 +179,163 @@ export class AttributeSelector extends SimpleSelector {
     public get rarity(): number { return Specificity.Attribute; }
     public toString(): string { return `[${this.attribute}${wrap(this.test)}${(this.test && this.value) || ''}]${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return false; }
+    public mayMatch(node: Node): boolean { return true; }
+    public updateChangeMap(node: Node, map: ChangeMap): void { map.addAttribute(node, this.attribute); }
 }
 
-@SelProps(Specificity.PseudoClass, Rarity.PseudoClass)
+@SelProps(Specificity.PseudoClass, Rarity.PseudoClass, Match.Dynamic)
 export class PseudoClassSelector extends SimpleSelector {
     constructor(public cssPseudoClass: string) { super(); }
     public toString(): string { return `:${this.cssPseudoClass}${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return node.cssPseudoClasses && node.cssPseudoClasses.has(this.cssPseudoClass); }
+    public mayMatch(node: Node): boolean { return true; }
+    public updateChangeMap(node: Node, map: ChangeMap): void { map.addPseudoClass(node, this.cssPseudoClass); }
 }
 
-export class SimpleSelectorSequence extends SelectorCore {
+export class SimpleSelectorSequence extends SimpleSelector {
     private head: SimpleSelector;
     constructor(public selectors: SimpleSelector[]) {
         super();
         this.specificity = selectors.reduce((sum, sel) => sel.specificity + sum, 0);
         this.head = this.selectors.reduce((prev, curr) => !prev || (curr.rarity > prev.rarity) ? curr : prev, null);
+        this.dynamic = selectors.some(sel => sel.dynamic);
     }
     public toString(): string { return `${this.selectors.join("")}${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return this.selectors.every(sel => sel.match(node)); }
+    public mayMatch(node: Node): boolean {
+        return this.selectors.every(sel => sel.mayMatch(node));
+    }
+    public updateChangeMap(node, map): void {
+        this.selectors.forEach(sel => sel.updateChangeMap(node, map));
+    }
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
         this.head.lookupSort(sorter, base || this);
     }
 }
 
 export class Selector extends SelectorCore {
-    private selectorsReversed: (SimpleSelectorSequence | SimpleSelector)[];
-    constructor(public selectors: (SimpleSelectorSequence | SimpleSelector)[]) {
+    // Grouped by ancestor combinators, then by direct child combinators.
+    private groups: Selector.ChildGroup[];
+    private last: SelectorCore;
+
+    constructor(public selectors: SimpleSelector[]) {
         super();
-        this.selectorsReversed = selectors.reverse();
-        this.specificity = selectors.reduce((sum, sel) => sel.specificity + sum, 0);
-    }
-    public toString(): string { return this.selectors.join(""); }
-    public match(node: Node): boolean {
-        return this.selectorsReversed.every(sel => {
+        let lastGroup: SimpleSelector[];
+        let groups: SimpleSelector[][] = [];
+        selectors.reverse().forEach(sel => {
             switch(sel.combinator) {
-                case undefined: return sel.match(node);
-                case ">": return (node = node.parent) && sel.match(node);
+                case undefined:
                 case " ":
-                    while(node = node.parent) {
-                        if (sel.match(node)) {
-                            return true;
-                        }
-                    }
-                    return false;
-                case "~":
-                case "+":
+                    groups.push(lastGroup = []);
+                case ">":
+                    lastGroup.push(sel);
+                    break;
                 default:
-                    throw new Error(`Unsupported combinator '${sel.combinator}'`);
+                    throw new Error(`Unsupported combinator "${sel.combinator}".`);
+            }
+        });
+        this.groups = groups.map(g => new Selector.ChildGroup(g));
+        this.last = selectors[0];
+        this.specificity = selectors.reduce((sum, sel) => sel.specificity + sum, 0);
+        this.dynamic = selectors.some(sel => sel.dynamic);
+    }
+
+    public toString(): string { return this.selectors.join(""); }
+
+    public match(node: Node): boolean {
+        return this.groups.every((group, i) => {
+            if (i === 0) {
+                node = group.match(node);
+                return !!node;
+            } else {
+                let ancestor = node;
+                while(ancestor = ancestor.parent) {
+                    if (node = group.match(ancestor)) {
+                        return true;
+                    }
+                }
+                return false;
             }
         });
     }
+
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
-        this.selectorsReversed[0].lookupSort(sorter, this);
+        this.last.lookupSort(sorter, this);
+    }
+
+    public matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean {
+        if (!this.dynamic) {
+            return this.match(node);
+        }
+
+        let bounds: Selector.Bound[] = [];
+        let mayMatch = this.groups.every((group, i) => {
+            if (i === 0) {
+                node = group.mayMatch(node);
+                bounds.push({ left: node, right: node });
+                return !!node;
+            } else {
+                let ancestor = node;
+                while(ancestor = ancestor.parent) {
+                    if (node = group.mayMatch(ancestor)) {
+                        bounds.push({ left: node, right: null });
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+
+        // Calculating the right bounds for each selectors won't save much
+        if (!mayMatch) {
+            return false;
+        }
+
+        if (!map) {
+            return mayMatch;
+        }
+
+        for (let i = 0; i < this.groups.length; i++) {
+            let group = this.groups[i];
+            if (!group.dynamic) {
+                continue;
+            }
+            let bound = bounds[i];
+            let node = bound.left;
+            do {
+                if (group.mayMatch(node)) {
+                    group.addToChangeMap(node, map);
+                }
+            } while((node != bound.right) && (node = node.parent));
+        }
+
+        return mayMatch;
+    }
+}
+export namespace Selector {
+    // Non-spec. Selector sequences are grouped by ancestor then by child combinators for easier backtracking.
+    export class ChildGroup {
+        public dynamic: boolean;
+
+        constructor(private selectors: SimpleSelector[]) {
+            this.dynamic = selectors.some(sel => sel.dynamic);
+        }
+
+        public match(node: Node): Node {
+            return this.selectors.every((sel, i) => (i === 0 ? node : node = node.parent) && sel.match(node)) ? node : null;
+        }
+
+        public mayMatch(node: Node): Node {
+            return this.selectors.every((sel, i) => (i === 0 ? node : node = node.parent) && sel.mayMatch(node)) ? node : null;
+        }
+
+        public addToChangeMap(node: Node, map: ChangeMap) {
+            this.selectors.forEach((sel, i) => (i === 0 ? node : node = node.parent) && sel.updateChangeMap(node, map));
+        }
+    }
+    export interface Bound {
+        left: Node;
+        right: Node;
     }
 }
 
@@ -315,7 +445,7 @@ export class SelectorsMap implements LookupSorter {
         rulesets.forEach(rule => rule.lookupSort(this));
     }
 
-    query(node: Node): SelectorCore[] {
+    query(node: Node): SelectorsMatch {
         let selectorClasses = [
             this.universal,
             this.id[node.id],
@@ -324,10 +454,16 @@ export class SelectorsMap implements LookupSorter {
         node.cssClasses && node.cssClasses.forEach(c => selectorClasses.push(this.class[c]));
         let selectors = selectorClasses
             .filter(arr => !!arr)
-            .reduce((cur, next) => cur.concat(next), [])
+            .reduce((cur, next) => cur.concat(next), []);
+        
+        let selectorsMatch = new SelectorsMatch();
+
+        selectorsMatch.selectors = selectors
+            .filter(sel => sel.sel.matchOrMayMatchAfterChange(node, selectorsMatch))
             .sort((a, b) => a.sel.specificity - b.sel.specificity || a.pos - b.pos)
             .map(docSel => docSel.sel);
-        return selectors;
+
+        return selectorsMatch;
     }
 
     sortById(id: string, sel: SelectorCore): void { this.addToMap(this.id, id, sel); }
@@ -351,5 +487,34 @@ export class SelectorsMap implements LookupSorter {
 
     private makeDocSelector(sel: SelectorCore): SelectorInDocument {
         return { sel, pos: this.position++ };
+    }
+}
+
+declare type Dependencies = { attributes: Set<string>, pseudoClasses: Set<string> };
+
+interface ChangeMap {
+    addAttribute(node: Node, attribute: string): void;
+    addPseudoClass(node: Node, pseudoClass: string): void;
+}
+
+export class SelectorsMatch implements ChangeMap {
+    public changeMap: Map<Node, Dependencies> = new Map<Node, Dependencies>();
+    public selectors;
+
+    public addAttribute(node: Node, attribute: string): void {
+        this.properties(node).attributes.add(attribute);
+    }
+
+    public addPseudoClass(node: Node, pseudoClass: string): void {
+        this.properties(node).pseudoClasses.add(pseudoClass);
+    }
+
+    private properties(node: Node): Dependencies {
+        let set = this.changeMap.get(node);
+        if (!set) {
+            set = { attributes: new Set(), pseudoClasses: new Set() }
+            this.changeMap.set(node, set);
+        }
+        return set;
     }
 }

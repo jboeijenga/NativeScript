@@ -38,13 +38,13 @@ export function test_narrow_selection() {
         image { color: green; }
     `);
 
-    let buttonQuerry = map.query({ cssType: "button" });
+    let buttonQuerry = map.query({ cssType: "button" }).selectors;
     TKUnit.assertEqual(buttonQuerry.length, 1);
     TKUnit.assertDeepSuperset(buttonQuerry[0].ruleset.declarations, [
         { property: "color", value: "red" }
     ]);
 
-    let imageQuerry = map.query({ cssType: "image", cssClasses: new Set(["login"]) });
+    let imageQuerry = map.query({ cssType: "image", cssClasses: new Set(["login"]) }).selectors;
     TKUnit.assertEqual(imageQuerry.length, 2);
     // Note class before type
     TKUnit.assertDeepSuperset(imageQuerry[0].ruleset.declarations, [
@@ -161,5 +161,56 @@ export function test_ancestor_combinator() {
     }), "Item in stack in page NOT expected to match.");
 }
 
+export function test_backtracking_css_selector() {
+    let sel = createOne(`a>b c { color: red; }`).selectors[0];
+    let child = {
+        cssType: "c",
+        parent: {
+            cssType: "b",
+            parent: {
+                cssType: "fail",
+                parent: {
+                    cssType: "b",
+                    parent: {
+                        cssType: "a"
+                    }
+                }
+            }
+        }
+    }
+    TKUnit.assertTrue(sel.match(child));
+}
 
+export function test_simple_query_match() {
+    let {map} = create(`list grid[promotion] button:highlighted { color: red; }`);
+
+    let list, grid, button;
+
+    button = {
+        cssType: "button",
+        cssPseudoClasses: new Set<string>(["highlighted"]),
+        parent: grid = {
+            cssType: "grid",
+            promotion: true,
+            parent: list = {
+                cssType: "list"
+            }
+        }
+    }
+
+    let match = map.query(button);
+    TKUnit.assertEqual(match.selectors.length, 1, "Expected match to have one selector.");
+
+    let expected = new Map<Node, selector.Dependencies>();
+    expected.set(grid, {
+        attributes: new Set(["promotion"]),
+        pseudoClasses: new Set()
+    });
+    expected.set(button, {
+        attributes: new Set(),
+        pseudoClasses: new Set(["highlighted"])
+    });
+    // TODO: assertDeepEqual does not work well with Set and Map... This test is void!!!
+    TKUnit.assertDeepEqual(match.changeMap, expected);
+}
 
