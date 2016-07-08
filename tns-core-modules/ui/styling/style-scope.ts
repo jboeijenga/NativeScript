@@ -12,7 +12,7 @@ import cssAnimationParser = require("./css-animation-parser");
 import observable = require("ui/core/dependency-observable");
 
 import {convertString} from "utils/utils";
-import {RuleSet, SelectorsMap, SelectorCore, SelectorsMatch} from "ui/styling/css-selector";
+import {RuleSet, SelectorsMap, SelectorCore, SelectorsMatch, ChangeMap } from "ui/styling/css-selector";
 import {StyleProperty, ResolvedStylePropertyHandler, withStyleProperty} from "ui/styling/style-property";
 import {getSpecialPropertySetter} from "ui/builder/special-properties";
 
@@ -42,22 +42,18 @@ function ensureFS() {
 var pattern: RegExp = /('|")(.*?)\1/;
 
 export class CssState {
-    constructor(private view: view.View, private selectors: SelectorsMatch) {
-        this.update();
-        // selectors.changedOn((view, props, pseudoClasses) => {
-        //     console.log("Watch the " + view + " for " + props + " and " + pseudoClasses);
-        //     // TODO: Subscribe...
-        // });
+    constructor(private view: view.View, private match: SelectorsMatch<view.View>) {
     }
 
-    public update(): void {
-        this.view.style._beginUpdate();
+    public get changeMap(): ChangeMap<view.View> {
+        return this.match.changeMap;
+    }
 
+    public apply(): void {
+        // TODO: We probably can device a better way to apply changes after changed state.
         this.view.style._resetCssValues();
-        let matchingSelectors = this.selectors.selectors.filter(sel => sel.match(this.view));
+        let matchingSelectors = this.match.selectors.filter(sel => sel.dynamic ? sel.match(this.view) : true);
         matchingSelectors.forEach(s => applyDescriptors(this.view, s.ruleset));
-
-        this.view.style._endUpdate();
     }
 }
 
@@ -202,10 +198,14 @@ export class StyleScope {
     }
 
     public applySelectors(view: view.View): void {
-        this.ensureSelectors();
+        this.ensureSelectors(); 
 
         let state = this._selectors.query(view);
-        view._cssState = new CssState(view, state);
+
+        let previousState = view._cssState;
+        let nextState = new CssState(view, state);
+        view._cssState = nextState;
+        view._onCssStateChange(previousState, nextState);
     }
 
     public query(node: Node): SelectorCore[] {

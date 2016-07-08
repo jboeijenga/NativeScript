@@ -525,7 +525,9 @@ declare module "ui/core/view" {
         _gestureObservers: any;
         _isInheritedChange(): boolean;
         _domId: number;
+
         _cssState: cssScope.CssState;
+        _onCssStateChange(previous: cssScope.CssState, next: cssScope.CssState);
 
         _registerAnimation(animation: keyframeAnimationModule.KeyframeAnimation);
         _unregisterAnimation(animation: keyframeAnimationModule.KeyframeAnimation);

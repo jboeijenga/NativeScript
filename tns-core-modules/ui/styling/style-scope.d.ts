@@ -2,14 +2,19 @@
 declare module "ui/styling/style-scope" {
     import view = require("ui/core/view");
     import cssParser = require("css");
-    import {RuleSet, Node, SelectorCore} from "ui/styling/css-selector";
+    import {RuleSet, Node, SelectorCore, ChangeMap} from "ui/styling/css-selector";
     import {KeyframeAnimationInfo} from "ui/animation/keyframe-animation";
 
     export class CssState {
         /**
          * Re-evaluate the selectors and apply any changes to the underlying view.
          */
-        public update(): void;
+        public apply(): void;
+
+        /**
+         * Gets the static selectors that match the view and the dynamic selectors that may potentially match the view.
+         */
+        public changeMap: ChangeMap<view.View>;
     }
 
     export class StyleScope {

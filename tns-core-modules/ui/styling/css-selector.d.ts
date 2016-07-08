@@ -21,6 +21,10 @@
     }
 
     class SelectorCore {
+        /**
+         * Dynamic selectors depend on attributes and pseudo classes.
+         */
+        dynamic: boolean;
         match(node: Node): boolean;
         ruleset: RuleSet;
     }
@@ -43,20 +47,26 @@
         /**
          * Get a list of selectors that are likely to match the node.
          */
-        query(node: Node): SelectorsMatch;
+        query<T extends Node>(node: T): SelectorsMatch<T>;
     }
+
+    type ChangeMap<T extends Node> = Map<T, Changes>;
 
     interface Changes {
         attributes?: Set<string>;
         pseudoClasses?: Set<string>;
     }
 
-    class SelectorsMatch {
+    class SelectorsMatch<T extends Node> {
+        /**
+         * Gets the static selectors that match the queried node and the dynamic selectors that may potentially match the queried node.
+         */
         selectors: SelectorCore[];
+
         /**
          * Gets a map of nodes to attributes and pseudo classes, that may affect the state of the dynamic 
          */
-        changeMap: Map<Node, Changes>;
+        changeMap: ChangeMap<T>;
     }
 
     export function fromAstNodes(astRules: parser.Node[]): RuleSet[];

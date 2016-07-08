@@ -1,4 +1,4 @@
-﻿import {Node, Declaration, Changes} from "ui/styling/css-selector";
+﻿import {Node, Declaration, Changes, ChangeMap} from "ui/styling/css-selector";
 import {isNullOrUndefined} from "utils/types";
 import {escapeRegexSymbols} from "utils/utils";
 
@@ -21,7 +21,7 @@ const enum Rarity {
     Id = 3,
     Class = 2,
     Type = 1,
-    PseudoClass = 0, 
+    PseudoClass = 0,
     Attribute = 0,
     Universal = 0,
     Inline = 0
@@ -64,22 +64,26 @@ export abstract class SelectorCore {
     public ruleset: RuleSet;
     public dynamic: boolean;
     public abstract match(node: Node): boolean;
-    public abstract matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean;
+    /**
+     * If the selector is static returns if it matches the node.
+     * If the selector is dynamic returns if it may match the node, and accumulates any changes that may affect its state.
+     */
+    public abstract accumulateChanges(node: Node, map: ChangeAccumulator): boolean;
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void { sorter.sortAsUniversal(base || this); }
 }
 
 export abstract class SimpleSelector extends SelectorCore {
-    public matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean {
+    public accumulateChanges(node: Node, map?: ChangeAccumulator): boolean {
         if (!this.dynamic) {
             return this.match(node);
         } else if (this.mayMatch(node)) {
-            this.updateChangeMap(node, map);
+            this.trackChanges(node, map);
             return true;
         }
         return false;
     }
     public mayMatch(node: Node): boolean { return this.match(node); }
-    public updateChangeMap(node: Node, map: ChangeMap): void {}
+    public trackChanges(node: Node, map: ChangeAccumulator): void {}
 }
 
 function wrap(text: string): string {
@@ -180,7 +184,7 @@ export class AttributeSelector extends SimpleSelector {
     public toString(): string { return `[${this.attribute}${wrap(this.test)}${(this.test && this.value) || ''}]${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return false; }
     public mayMatch(node: Node): boolean { return true; }
-    public updateChangeMap(node: Node, map: ChangeMap): void { map.addAttribute(node, this.attribute); }
+    public trackChanges(node: Node, map: ChangeAccumulator): void { map.addAttribute(node, this.attribute); }
 }
 
 @SelProps(Specificity.PseudoClass, Rarity.PseudoClass, Match.Dynamic)
@@ -189,7 +193,7 @@ export class PseudoClassSelector extends SimpleSelector {
     public toString(): string { return `:${this.cssPseudoClass}${wrap(this.combinator)}`; }
     public match(node: Node): boolean { return node.cssPseudoClasses && node.cssPseudoClasses.has(this.cssPseudoClass); }
     public mayMatch(node: Node): boolean { return true; }
-    public updateChangeMap(node: Node, map: ChangeMap): void { map.addPseudoClass(node, this.cssPseudoClass); }
+    public trackChanges(node: Node, map: ChangeAccumulator): void { map.addPseudoClass(node, this.cssPseudoClass); }
 }
 
 export class SimpleSelectorSequence extends SimpleSelector {
@@ -205,8 +209,8 @@ export class SimpleSelectorSequence extends SimpleSelector {
     public mayMatch(node: Node): boolean {
         return this.selectors.every(sel => sel.mayMatch(node));
     }
-    public updateChangeMap(node, map): void {
-        this.selectors.forEach(sel => sel.updateChangeMap(node, map));
+    public trackChanges(node, map): void {
+        this.selectors.forEach(sel => sel.trackChanges(node, map));
     }
     public lookupSort(sorter: LookupSorter, base?: SelectorCore): void {
         this.head.lookupSort(sorter, base || this);
@@ -263,7 +267,7 @@ export class Selector extends SelectorCore {
         this.last.lookupSort(sorter, this);
     }
 
-    public matchOrMayMatchAfterChange(node: Node, map?: ChangeMap): boolean {
+    public accumulateChanges(node: Node, map?: ChangeAccumulator): boolean {
         if (!this.dynamic) {
             return this.match(node);
         }
@@ -329,8 +333,8 @@ export namespace Selector {
             return this.selectors.every((sel, i) => (i === 0 ? node : node = node.parent) && sel.mayMatch(node)) ? node : null;
         }
 
-        public addToChangeMap(node: Node, map: ChangeMap) {
-            this.selectors.forEach((sel, i) => (i === 0 ? node : node = node.parent) && sel.updateChangeMap(node, map));
+        public addToChangeMap(node: Node, map: ChangeAccumulator) {
+            this.selectors.forEach((sel, i) => (i === 0 ? node : node = node.parent) && sel.trackChanges(node, map));
         }
     }
     export interface Bound {
@@ -433,7 +437,7 @@ interface SelectorInDocument {
 interface SelectorMap {
     [key: string]: SelectorInDocument[]
 }
-export class SelectorsMap implements LookupSorter {
+export class SelectorsMap<T extends Node> implements LookupSorter {
     private id: SelectorMap = {};
     private class: SelectorMap = {};
     private type: SelectorMap = {};
@@ -445,7 +449,7 @@ export class SelectorsMap implements LookupSorter {
         rulesets.forEach(rule => rule.lookupSort(this));
     }
 
-    query(node: Node): SelectorsMatch {
+    query(node: T): SelectorsMatch<T> {
         let selectorClasses = [
             this.universal,
             this.id[node.id],
@@ -456,10 +460,10 @@ export class SelectorsMap implements LookupSorter {
             .filter(arr => !!arr)
             .reduce((cur, next) => cur.concat(next), []);
         
-        let selectorsMatch = new SelectorsMatch();
+        let selectorsMatch = new SelectorsMatch<T>();
 
         selectorsMatch.selectors = selectors
-            .filter(sel => sel.sel.matchOrMayMatchAfterChange(node, selectorsMatch))
+            .filter(sel => sel.sel.accumulateChanges(node, selectorsMatch))
             .sort((a, b) => a.sel.specificity - b.sel.specificity || a.pos - b.pos)
             .map(docSel => docSel.sel);
 
@@ -490,16 +494,16 @@ export class SelectorsMap implements LookupSorter {
     }
 }
 
-interface ChangeMap {
+interface ChangeAccumulator {
     addAttribute(node: Node, attribute: string): void;
     addPseudoClass(node: Node, pseudoClass: string): void;
 }
 
-export class SelectorsMatch implements ChangeMap {
-    public changeMap: Map<Node, Changes> = new Map<Node, Changes>();
+export class SelectorsMatch<T extends Node> implements ChangeAccumulator {
+    public changeMap: ChangeMap<T> = new Map<T, Changes>();
     public selectors;
 
-    public addAttribute(node: Node, attribute: string): void {
+    public addAttribute(node: T, attribute: string): void {
         let deps: Changes = this.properties(node);
         if (!deps.attributes) {
             deps.attributes = new Set();
@@ -507,7 +511,7 @@ export class SelectorsMatch implements ChangeMap {
         deps.attributes.add(attribute);
     }
 
-    public addPseudoClass(node: Node, pseudoClass: string): void {
+    public addPseudoClass(node: T, pseudoClass: string): void {
         let deps: Changes = this.properties(node);
         if (!deps.pseudoClasses) {
             deps.pseudoClasses = new Set();
@@ -515,7 +519,7 @@ export class SelectorsMatch implements ChangeMap {
         deps.pseudoClasses.add(pseudoClass);
     }
 
-    private properties(node: Node): Changes {
+    private properties(node: T): Changes {
         let set = this.changeMap.get(node);
         if (!set) {
             this.changeMap.set(node, set = {});

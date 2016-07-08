@@ -647,16 +647,12 @@ export class View extends ProxyObject implements definition.View {
 
     public addPseudoClass(name: string): void {
         this.cssPseudoClasses.add(name);
-        if (this._cssState) {
-            this._cssState.update();
-        }
+        this.notifyPseudoClassChanged(name, true);
     }
 
     public deletePseudoClass(name: string): void {
         this.cssPseudoClasses.delete(name);
-        if (this._cssState) {
-            this._cssState.update();
-        }
+        this.notifyPseudoClassChanged(name, false);
     }
 
     public static resolveSizeAndState(size: number, specSize: number, specMode: number, childMeasuredState: number): number {
@@ -1212,5 +1208,46 @@ export class View extends ProxyObject implements definition.View {
     protected _canApplyNativeProperty(): boolean {
         // Check for a valid _nativeView instance
         return !!this._nativeView;
+    }
+
+    protected notifyPseudoClassChanged(pseudoClass: string, added: boolean): void {
+        this.notify({ eventName: ":" + pseudoClass + "Change", object: this, added });
+    }
+
+    _onCssStateChange(previous: CssState, next: CssState): void {
+        // TODO: Make sure the state is set to null and this is called on unloaded to clean up change listeners...
+        // On visual tree changes, reapply all the css or views may be hold in the changeMap
+        if (!this._invalidateCssHandler) {
+            this._invalidateCssHandler = this.applyCssState.bind(this);
+        }
+
+        if (previous) {
+            previous.changeMap.forEach((changes, view) => {
+                changes.attributes && changes.attributes.forEach(attribute => view.removeEventListener("onPropertyChanged:" + attribute, this._invalidateCssHandler));
+                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => view.removeEventListener("onPseudoClassChanged:" + pseudoClass, this._invalidateCssHandler));
+            });
+        }
+
+        if (next) {
+            next.changeMap.forEach((changes, view) => {
+                changes.attributes && changes.attributes.forEach(attribute => view.addEventListener(attribute + "Change", this._invalidateCssHandler));
+                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => view.addEventListener(":" + pseudoClass + "Change", this._invalidateCssHandler));
+            });
+        }
+
+        this.applyCssState();
+    }
+
+    /**
+     * Notify that some attributes or pseudo classes that may affect the current CssState had changed.
+     */
+    private _invalidateCssHandler;
+
+    private applyCssState(): void {
+        if (this._cssState) {
+            this.style._beginUpdate();
+            this._cssState.apply();
+            this.style._endUpdate();
+        }
     }
 }

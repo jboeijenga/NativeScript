@@ -27,7 +27,7 @@ function onNavigatedTo(args) {
     page.content = label
     args.object.off(Page.navigatedToEvent, onNavigatedTo);
     setTimeout(function () {
-        tests.runAll("CSS-SELECTOR");
+        tests.runAll();
     }, 10);
 
 }
