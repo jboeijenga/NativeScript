@@ -297,7 +297,7 @@ function applyDescriptors(view: view.View, ruleset: RuleSet): void {
         }
     }));
 
-    let ruleAnimations = ruleset[animationsSymbol];
+    let ruleAnimations: keyframeAnimation.KeyframeAnimationInfo[] = ruleset[animationsSymbol];
     if (ruleAnimations && view.isLoaded && view._nativeView !== undefined) {
         for (let animationInfo of ruleAnimations) {
             let animation = keyframeAnimation.KeyframeAnimation.keyframeAnimationFromInfo(animationInfo, modifier);
