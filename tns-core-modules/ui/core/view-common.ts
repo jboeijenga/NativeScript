@@ -96,6 +96,21 @@ export function getAncestor(view: View, criterion: string | Function): definitio
     return null;
 }
 
+export function PseudoClassHandler(... pseudoClasses: string[]): MethodDecorator {
+    let stateEventNames = pseudoClasses.map(s => ":" + s);
+    let isSubscribed = Symbol("isSubscribed");
+    return <T>(target: Object, propertyKey: string | symbol, descriptor: TypedPropertyDescriptor<T>) => {
+        function update() {
+            let hasListeners = stateEventNames.some(s => this.hasListeners(s));
+            if (!!this[isSubscribed] != hasListeners) {
+                this[propertyKey](hasListeners);
+                this[isSubscribed] = hasListeners;
+            }
+        }
+        stateEventNames.forEach(s => target[s] = update);
+    }
+}
+
 var viewIdCounter = 0;
 
 function onCssClassPropertyChanged(data: PropertyChangeData) {
@@ -646,13 +661,17 @@ export class View extends ProxyObject implements definition.View {
     }
 
     public addPseudoClass(name: string): void {
-        this.cssPseudoClasses.add(name);
-        this.notifyPseudoClassChanged(name, true);
+        if (!this.cssPseudoClasses.has(name)) {
+            this.cssPseudoClasses.add(name);
+            this.notifyPseudoClassChanged(name);
+        }
     }
 
     public deletePseudoClass(name: string): void {
-        this.cssPseudoClasses.delete(name);
-        this.notifyPseudoClassChanged(name, false);
+        if (this.cssPseudoClasses.has(name)) {
+            this.cssPseudoClasses.delete(name);
+            this.notifyPseudoClassChanged(name);
+        }
     }
 
     public static resolveSizeAndState(size: number, specSize: number, specMode: number, childMeasuredState: number): number {
@@ -1210,8 +1229,8 @@ export class View extends ProxyObject implements definition.View {
         return !!this._nativeView;
     }
 
-    protected notifyPseudoClassChanged(pseudoClass: string, added: boolean): void {
-        this.notify({ eventName: ":" + pseudoClass + "Change", object: this, added });
+    private notifyPseudoClassChanged(pseudoClass: string): void {
+        this.notify({ eventName: ":" + pseudoClass, object: this });
     }
 
     _onCssStateChange(previous: CssState, next: CssState): void {
@@ -1227,7 +1246,11 @@ export class View extends ProxyObject implements definition.View {
                     view.removeEventListener("onPropertyChanged:" + attribute, this._invalidateCssHandler)
                 });
                 changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => {
-                    view.removeEventListener("onPseudoClassChanged:" + pseudoClass, this._invalidateCssHandler)
+                    let eventName = ":" + pseudoClass;
+                    view.removeEventListener(eventName, this._invalidateCssHandler)
+                    if (view[eventName]) {
+                        view[eventName]();
+                    }
                 });
             });
         }
@@ -1238,11 +1261,16 @@ export class View extends ProxyObject implements definition.View {
                     view.addEventListener(attribute + "Change", this._invalidateCssHandler)
                 });
                 changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => {
-                    view.addEventListener(":" + pseudoClass + "Change", this._invalidateCssHandler);
+                    let eventName = ":" + pseudoClass;
+                    view.addEventListener(":" + pseudoClass, this._invalidateCssHandler);
+                    if (view[eventName]) {
+                        view[eventName]();
+                    }
                 });
             });
         }
 
+        // TODO: Batch updates in this method, silence change notifications before reaching this point.
         this.applyCssState();
     }
 

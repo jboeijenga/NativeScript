@@ -8,6 +8,7 @@ import enums = require("ui/enums");
 import dependencyObservable = require("ui/core/dependency-observable");
 import styleScope = require("../styling/style-scope");
 import {Property} from "ui/core/dependency-observable";
+import {PseudoClassHandler} from "ui/core/view";
 
 class TapHandlerImpl extends NSObject {
     private _owner: WeakRef<Button>;
@@ -43,27 +44,15 @@ export class Button extends common.Button {
 
         this._tapHandler = TapHandlerImpl.initWithOwner(new WeakRef(this));
         this._ios.addTargetActionForControlEvents(this._tapHandler, "tap", UIControlEvents.UIControlEventTouchUpInside);
-
-        this._stateChangedHandler = new stateChanged.ControlStateChangeListener(this._ios, (s: string) => {
-            this._goToVisualState(s);
-        });
     }
 
     public onLoaded() {
         super.onLoaded();
-        this._updateHandler();
     }
 
     public onUnloaded() {
         super.onUnloaded();
         this._stateChangedHandler.stop();
-    }
-
-    public _onPropertyChanged(property: Property, oldValue: any, newValue: any) {
-        super._onPropertyChanged(property, oldValue, newValue);
-        if (property.affectsStyle) {
-            this._updateHandler();
-        }
     }
 
     get ios(): UIButton {
@@ -88,19 +77,18 @@ export class Button extends common.Button {
         this.style._updateTextDecoration();
     }
 
-    private _updateHandler() {
-        if (this.parent !== null && this.page !== null) {
-            let rootPage = this.page;
-            // let scope: styleScope.StyleScope = (<any>rootPage)._getStyleScope();
-
-            // TODO: Button watch for changes...
-
-            // if (scope.getVisualStates(this) !== undefined) {
-            //     this._stateChangedHandler.start();
-            // }
-            // else {
-            //     this._stateChangedHandler.stop();
-            // }
+    @PseudoClassHandler("normal", "highlighted")
+    _updateHandler(subscribe: boolean) {
+        console.log(this + " subscribe " + subscribe);
+        if (subscribe) {
+            if (!this._stateChangedHandler) {
+                this._stateChangedHandler = new stateChanged.ControlStateChangeListener(this._ios, (s: string) => {
+                    this._goToVisualState(s);
+                });
+            }
+            this._stateChangedHandler.start();
+        } else {
+            this._stateChangedHandler.stop();
         }
     }
 }

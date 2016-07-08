@@ -34,6 +34,8 @@ declare module "ui/core/view" {
 
     export function isEventOrGesture(name: string, view: View): boolean;
 
+    export function PseudoClassHandler(... pseudoClasses: string[]): MethodDecorator;
+
     /**
      * The Point interface describes a two dimensional location. 
      * It has two properties x and y, representing the x and y coordinate of the location. 
@@ -582,7 +584,7 @@ declare module "ui/core/view" {
      */
     export class CustomLayoutView extends View {
     }
-    
+
     /**
      * Defines an interface for a View factory function.
      * Commonly used to specify the visualization of data objects.
