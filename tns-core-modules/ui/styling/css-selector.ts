@@ -1,4 +1,4 @@
-﻿import {Node, Declaration} from "ui/styling/css-selector";
+﻿import {Node, Declaration, Changes} from "ui/styling/css-selector";
 import {isNullOrUndefined} from "utils/types";
 import {escapeRegexSymbols} from "utils/utils";
 
@@ -490,30 +490,35 @@ export class SelectorsMap implements LookupSorter {
     }
 }
 
-declare type Dependencies = { attributes: Set<string>, pseudoClasses: Set<string> };
-
 interface ChangeMap {
     addAttribute(node: Node, attribute: string): void;
     addPseudoClass(node: Node, pseudoClass: string): void;
 }
 
 export class SelectorsMatch implements ChangeMap {
-    public changeMap: Map<Node, Dependencies> = new Map<Node, Dependencies>();
+    public changeMap: Map<Node, Changes> = new Map<Node, Changes>();
     public selectors;
 
     public addAttribute(node: Node, attribute: string): void {
-        this.properties(node).attributes.add(attribute);
+        let deps: Changes = this.properties(node);
+        if (!deps.attributes) {
+            deps.attributes = new Set();
+        }
+        deps.attributes.add(attribute);
     }
 
     public addPseudoClass(node: Node, pseudoClass: string): void {
-        this.properties(node).pseudoClasses.add(pseudoClass);
+        let deps: Changes = this.properties(node);
+        if (!deps.pseudoClasses) {
+            deps.pseudoClasses = new Set();
+        }
+        deps.pseudoClasses.add(pseudoClass);
     }
 
-    private properties(node: Node): Dependencies {
+    private properties(node: Node): Changes {
         let set = this.changeMap.get(node);
         if (!set) {
-            set = { attributes: new Set(), pseudoClasses: new Set() }
-            this.changeMap.set(node, set);
+            this.changeMap.set(node, set = {});
         }
         return set;
     }

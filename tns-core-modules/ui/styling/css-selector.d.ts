@@ -46,9 +46,9 @@
         query(node: Node): SelectorsMatch;
     }
 
-    interface Dependencies {
-        attributes: Set<string>;
-        pseudoClasses: Set<string>;
+    interface Changes {
+        attributes?: Set<string>;
+        pseudoClasses?: Set<string>;
     }
 
     class SelectorsMatch {
@@ -56,7 +56,7 @@
         /**
          * Gets a map of nodes to attributes and pseudo classes, that may affect the state of the dynamic 
          */
-        changeMap: Map<Node, Dependencies>;
+        changeMap: Map<Node, Changes>;
     }
 
     export function fromAstNodes(astRules: parser.Node[]): RuleSet[];

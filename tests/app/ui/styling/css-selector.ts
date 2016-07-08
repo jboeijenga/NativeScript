@@ -181,6 +181,8 @@ export function test_backtracking_css_selector() {
     TKUnit.assertTrue(sel.match(child));
 }
 
+function toString() { return this.cssType; }
+
 export function test_simple_query_match() {
     let {map} = create(`list grid[promotion] button:highlighted { color: red; }`);
 
@@ -189,11 +191,14 @@ export function test_simple_query_match() {
     button = {
         cssType: "button",
         cssPseudoClasses: new Set<string>(["highlighted"]),
+        toString,
         parent: grid = {
             cssType: "grid",
             promotion: true,
+            toString,
             parent: list = {
-                cssType: "list"
+                cssType: "list",
+                toString
             }
         }
     }
@@ -201,15 +206,9 @@ export function test_simple_query_match() {
     let match = map.query(button);
     TKUnit.assertEqual(match.selectors.length, 1, "Expected match to have one selector.");
 
-    let expected = new Map<Node, selector.Dependencies>();
-    expected.set(grid, {
-        attributes: new Set(["promotion"]),
-        pseudoClasses: new Set()
-    });
-    expected.set(button, {
-        attributes: new Set(),
-        pseudoClasses: new Set(["highlighted"])
-    });
+    let expected = new Map<Node, selector.Changes>()
+        .set(grid, { attributes: new Set(["promotion"]) })
+        .set(button, { pseudoClasses: new Set(["highlighted"]) });
     // TODO: assertDeepEqual does not work well with Set and Map... This test is void!!!
     TKUnit.assertDeepEqual(match.changeMap, expected);
 }
