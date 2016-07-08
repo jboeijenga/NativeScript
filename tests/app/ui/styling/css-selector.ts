@@ -213,3 +213,23 @@ export function test_simple_query_match() {
     TKUnit.assertDeepEqual(match.changeMap, expected);
 }
 
+export function test_query_match_one_child_group() {
+    let {map} = create(`#prod[special] > gridlayout { color: red; }`);
+    let gridlayout, prod;
+
+    gridlayout = {
+        cssType: "gridlayout",
+        toString,
+        parent: prod = {
+            id: "prod",
+            cssType: "listview",
+            toString
+        }
+    };
+
+    let match = map.query(gridlayout);
+    TKUnit.assertEqual(match.selectors.length, 1, "Expected match to have one selector.");
+
+    let expected = new Map<Node, selector.Changes>().set(prod, { attributes: new Set(["special"])} );
+    TKUnit.assertDeepEqual(match.changeMap, expected);
+}

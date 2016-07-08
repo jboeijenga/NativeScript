@@ -1223,15 +1223,23 @@ export class View extends ProxyObject implements definition.View {
 
         if (previous) {
             previous.changeMap.forEach((changes, view) => {
-                changes.attributes && changes.attributes.forEach(attribute => view.removeEventListener("onPropertyChanged:" + attribute, this._invalidateCssHandler));
-                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => view.removeEventListener("onPseudoClassChanged:" + pseudoClass, this._invalidateCssHandler));
+                changes.attributes && changes.attributes.forEach(attribute => {
+                    view.removeEventListener("onPropertyChanged:" + attribute, this._invalidateCssHandler)
+                });
+                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => {
+                    view.removeEventListener("onPseudoClassChanged:" + pseudoClass, this._invalidateCssHandler)
+                });
             });
         }
 
         if (next) {
             next.changeMap.forEach((changes, view) => {
-                changes.attributes && changes.attributes.forEach(attribute => view.addEventListener(attribute + "Change", this._invalidateCssHandler));
-                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => view.addEventListener(":" + pseudoClass + "Change", this._invalidateCssHandler));
+                changes.attributes && changes.attributes.forEach(attribute => {
+                    view.addEventListener(attribute + "Change", this._invalidateCssHandler)
+                });
+                changes.pseudoClasses && changes.pseudoClasses.forEach(pseudoClass => {
+                    view.addEventListener(":" + pseudoClass + "Change", this._invalidateCssHandler);
+                });
             });
         }
 

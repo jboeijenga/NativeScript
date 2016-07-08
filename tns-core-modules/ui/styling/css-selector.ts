@@ -275,14 +275,17 @@ export class Selector extends SelectorCore {
         let bounds: Selector.Bound[] = [];
         let mayMatch = this.groups.every((group, i) => {
             if (i === 0) {
-                node = group.mayMatch(node);
+                let nextNode = group.mayMatch(node);
                 bounds.push({ left: node, right: node });
+                node = nextNode;
                 return !!node;
             } else {
                 let ancestor = node;
                 while(ancestor = ancestor.parent) {
-                    if (node = group.mayMatch(ancestor)) {
-                        bounds.push({ left: node, right: null });
+                    let nextNode = group.mayMatch(ancestor);
+                    if (nextNode) {
+                        bounds.push({ left: ancestor, right: null });
+                        node = nextNode;
                         return true;
                     }
                 }
@@ -308,7 +311,7 @@ export class Selector extends SelectorCore {
             let node = bound.left;
             do {
                 if (group.mayMatch(node)) {
-                    group.addToChangeMap(node, map);
+                    group.trackChanges(node, map);
                 }
             } while((node != bound.right) && (node = node.parent));
         }
@@ -333,7 +336,7 @@ export namespace Selector {
             return this.selectors.every((sel, i) => (i === 0 ? node : node = node.parent) && sel.mayMatch(node)) ? node : null;
         }
 
-        public addToChangeMap(node: Node, map: ChangeAccumulator) {
+        public trackChanges(node: Node, map: ChangeAccumulator) {
             this.selectors.forEach((sel, i) => (i === 0 ? node : node = node.parent) && sel.trackChanges(node, map));
         }
     }
