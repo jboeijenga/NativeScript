@@ -5,6 +5,7 @@ module XMLHttpRequestResponseType {
     export var empty = "";
     export var text = "text";
     export var json = "json";
+    export var xml = "xml";
 }
 
 export class XMLHttpRequest {
@@ -107,6 +108,8 @@ export class XMLHttpRequest {
         if (this.responseType === XMLHttpRequestResponseType.json) {
             this._prepareJsonResponse(r);
 
+        } else if (this.responseType === XMLHttpRequestResponseType.xml ) {
+            this._prepareXmlResponse(r);
         } else if (this.responseType === XMLHttpRequestResponseType.empty ||
             this.responseType === XMLHttpRequestResponseType.text) {
             this._responseTextReader = () => r.content.toString();
@@ -115,9 +118,37 @@ export class XMLHttpRequest {
         this._setReadyState(this.DONE);
     }
 
+    private _prepareXmlResponse(r) {
+        this._responseTextReader = () => r.content.toString();
+        this._response = this.responseText;
+
+        // Add toString() method to ease debugging and
+        // make Angular2 response.text() method work properly.
+        Object.defineProperty(this._response, "toString", {
+            configurable: true,
+            enumerable: false,
+            writable: true,
+            value: () => this.responseText
+        });
+    }
+
     private _prepareJsonResponse(r) {
         this._responseTextReader = () => r.content.toString();
         this._response = JSON.parse(this.responseText);
+
+        // Add toString() method to ease debugging and
+        // make Angular2 response.text() method work properly.
+        Object.defineProperty(this._response, "toString", {
+            configurable: true,
+            enumerable: false,
+            writable: true,
+            value: () => this.responseText
+        });
+    }
+
+    private _prepareResponse(r, parser) {
+        this._responseTextReader = () => r.content.toString();
+        this._response = parser(this.responseText);
 
         // Add toString() method to ease debugging and
         // make Angular2 response.text() method work properly.
@@ -136,6 +167,8 @@ export class XMLHttpRequest {
         if (contentType) {
             if (contentType.indexOf('application/json') >= 0) {
                 this.responseType = XMLHttpRequestResponseType.json;
+            } else if ( contentType.indexOf('text/xml') >= 0 || contentType.indexOf('application/xml') >= 0 ) {
+                this.responseType = XMLHttpRequestResponseType.xml;
             } else if (contentType.indexOf('text/plain') >= 0) {
                 this.responseType = XMLHttpRequestResponseType.text;
             }
