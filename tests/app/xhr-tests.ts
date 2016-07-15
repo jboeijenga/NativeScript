@@ -355,7 +355,7 @@ export function test_getResponseHeader() {
             raw: '{"data": 42}'
         },
         headers: {
-            "content-type": "application/json"
+            "Content-Type": "application/json"
         }
 
     }
