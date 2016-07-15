@@ -181,6 +181,34 @@ export var test_XMLHttpRequest_FormDataContentSentAndReceivedProperly = function
     // </snippet>
 };
 
+export var test_XMLHttpRequest_contentSentAndReceivedXMLProperly = function (done) {
+    // <snippet module="xhr" title="xhr">
+    // ### Send/receive XML
+    // ``` JavaScript
+    let xhr = new XMLHttpRequest();
+    xhr.open("POST", "http://mockbin.org/bin/65b80a34-c3e7-44ab-8a42-530ca33e2c2d");
+    xhr.setRequestHeader("Content-Type", "text/xml");
+    xhr.onreadystatechange = function () {
+        if (xhr.readyState > 3) {
+            var result = xhr.responseText;
+            // var valueOne = result["json"]["MyVariableOne"];
+            // <hide>
+            try {
+                TKUnit.assert( result === "<answer>42</answer>", "Content not sent/received properly!");
+                TKUnit.assert( xhr.response === "<answer>42</answer>", "Response content not parsed properly!");
+                done(null);
+            }
+            catch (err) {
+                done(err);
+            }
+            // </hide>
+        }
+    };
+    xhr.send();
+    // ```
+    // </snippet>
+};
+
 export var test_XMLHttpRequest_abortShouldCancelonreadystatechange = function (done) {
     var flag = false;
     // <snippet module="xhr" title="xhr">
@@ -305,6 +333,25 @@ export function test_xhr_responseType_switched_to_JSON_if_header_present() {
     TKUnit.assertEqual(xhr.response.data, 42);
 }
 
+export function test_xhr_responseType_switched_to_XML_if_header_present() {
+    const xhr = <any>new XMLHttpRequest();
+    const response = {
+        statusCode: 200,
+        content: {
+            toString: function(){ return this.raw },
+            raw: '<data>42</data>'
+        },
+        headers: {
+            "Content-Type": "text/xml"
+        }
+
+    }
+    xhr._loadResponse(response);
+
+    TKUnit.assertEqual(xhr.responseType, "xml");
+    TKUnit.assertEqual(xhr.response, '<data>42</data>');
+}
+
 export function test_sets_status_and_statusText(done) {
     let xhr = new XMLHttpRequest();
     xhr.onreadystatechange = () => {
@@ -337,6 +384,7 @@ export function test_responseType(done) {
     xhr.responseType = "";
     xhr.responseType = "text";
     xhr.responseType = "json";
+    xhr.responseType = "xml";
 
     TKUnit.assertThrows(
         () => xhr.responseType = "arraybuffer",
@@ -346,7 +394,7 @@ export function test_responseType(done) {
     done(null);
 }
 
-export function test_getResponseHeader() {
+export function test_getResponseHeaderJSON() {
     const xhr = <any>new XMLHttpRequest();
     const response = {
         statusCode: 200,
@@ -362,4 +410,22 @@ export function test_getResponseHeader() {
     xhr._loadResponse(response);
 
     TKUnit.assertEqual(xhr.getResponseHeader("Content-Type"), "application/json");
+};
+
+export function test_getResponseHeaderXML() {
+    const xhr = <any>new XMLHttpRequest();
+    const response = {
+        statusCode: 200,
+        content: {
+            toString: function() { return this.raw },
+            raw: '<data>42</data>'
+        },
+        headers: {
+            "Content-Type": "text/xml"
+        }
+
+    }
+    xhr._loadResponse(response);
+
+    TKUnit.assertEqual(xhr.getResponseHeader("Content-Type"), "text/xml");
 };
